@@ -1,0 +1,128 @@
+[
+    {
+        "iconUrl": "https://upload.wikimedia.org/wikipedia/commons/2/2f/Korduene_Logo.png",
+        "fileHash": "sha256-bf290f09cec5ae650bd265e540864410ce9257b76e62633b6475e2bb738f7149",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/HAMAN-DRAGON/TestPlugins",
+        "fileSize": 7367,
+        "status": 1,
+        "language": "en",
+        "authors": [
+            "Cloudburst",
+            "Luna712"
+        ],
+        "tvTypes": [
+            "Movie"
+        ],
+        "version": 1,
+        "internalName": "ExampleProvider",
+        "description": "Lorem ipsum",
+        "url": "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/ExampleProvider.cs3",
+        "name": "ExampleProvider"
+    },
+    {
+        "iconUrl": "https://hentaibalo.com/favicon.ico",
+        "fileHash": "sha256-829ae2fc48153b5e9794208c5eea2e9452c05f6f4fe6d5f5c54da783d50fecfd",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/HAMAN-DRAGON/TestPlugins",
+        "fileSize": 15187,
+        "status": 1,
+        "language": "ar",
+        "authors": [
+            "HAMAN-DRA"
+        ],
+        "tvTypes": [
+            "NSFW",
+            "Anime"
+        ],
+        "version": 2,
+        "internalName": "HentaiBalo",
+        "description": "HentaiBalo - \u0647\u0646\u062a\u0627\u064a \u0628\u0627\u0644\u0648 \u0645\u062a\u0631\u062c\u0645 \u0639\u0631\u0628\u064a",
+        "url": "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/HentaiBalo.cs3",
+        "name": "HentaiBalo"
+    },
+    {
+        "iconUrl": "https://hentai-time.com/favicon.ico",
+        "fileHash": "sha256-8c05abbf46f4daf6d07beca38a2a6a009a119db1c80425cc1ad11dfe6c166443",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/HAMAN-DRAGON/TestPlugins",
+        "fileSize": 17460,
+        "status": 1,
+        "language": "ar",
+        "authors": [
+            "HAMAN-DRA"
+        ],
+        "tvTypes": [
+            "NSFW",
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "HentaiTime",
+        "description": "HentaiTime - \u0647\u0646\u062a\u0627\u064a \u062a\u0627\u064a\u0645 \u0645\u062a\u0631\u062c\u0645 \u0639\u0631\u0628\u064a",
+        "url": "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/HentaiTime.cs3",
+        "name": "HentaiTime"
+    },
+    {
+        "iconUrl": "https://hentaixplanet.com/favicon.ico",
+        "fileHash": "sha256-5319846a17e1c21a67d9a6c9fd41438c4213eef22b7e1db5fd22acf6bb5092a9",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/HAMAN-DRAGON/TestPlugins",
+        "fileSize": 13608,
+        "status": 1,
+        "language": "ar",
+        "authors": [
+            "HAMAN-DRA"
+        ],
+        "tvTypes": [
+            "NSFW",
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "HentaiXPlanet",
+        "description": "HentaiXPlanet - \u0643\u0648\u0643\u0628 \u0647\u0646\u062a\u0627\u064a \u0645\u062a\u0631\u062c\u0645 \u0639\u0631\u0628\u064a",
+        "url": "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/HentaiXPlanet.cs3",
+        "name": "HentaiXPlanet"
+    },
+    {
+        "iconUrl": "https://nxxhentai.net/favicon.ico",
+        "fileHash": "sha256-6fcd50856d2a649797faae34fabafcb547d92f6b489c97c7116894f2070da0ae",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/HAMAN-DRAGON/TestPlugins",
+        "fileSize": 17728,
+        "status": 1,
+        "language": "ar",
+        "authors": [
+            "HAMAN-DRA"
+        ],
+        "tvTypes": [
+            "NSFW",
+            "Anime"
+        ],
+        "version": 2,
+        "internalName": "NxxHentai",
+        "description": "NxxHentai - \u0647\u0646\u062a\u0627\u064a \u0645\u062a\u0631\u062c\u0645 \u0639\u0631\u0628\u064a",
+        "url": "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/NxxHentai.cs3",
+        "name": "NxxHentai"
+    },
+    {
+        "iconUrl": "https://ristohentai.com/favicon.ico",
+        "fileHash": "sha256-e7cd1ee62651912ea2483a9beb1166b59a0d7fc6897b0eaf44d31405b108b731",
+        "apiVersion": 1,
+        "repositoryUrl": "https://github.com/HAMAN-DRAGON/TestPlugins",
+        "fileSize": 16250,
+        "status": 1,
+        "language": "ar",
+        "authors": [
+            "HAMAN-DRA"
+        ],
+        "tvTypes": [
+            "NSFW",
+            "Anime"
+        ],
+        "version": 1,
+        "internalName": "RistoHentai",
+        "description": "RistoHentai - \u0647\u0646\u062a\u0627\u064a \u0645\u062a\u0631\u062c\u0645 \u0639\u0631\u0628\u064a",
+        "url": "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/RistoHentai.cs3",
+        "name": "RistoHentai"
+    }
+]
