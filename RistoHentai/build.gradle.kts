@@ -7,4 +7,4 @@ cloudstream {
     tvTypes = listOf("NSFW", "Anime")
     language = "ar"
     iconUrl = "https://ristohentai.com/favicon.ico"
-}
+} // build trigger
