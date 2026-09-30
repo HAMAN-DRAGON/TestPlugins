@@ -36,15 +36,22 @@ class HentaiXPlanet : MainAPI() {
         val href = fixUrl(a.attr("href"))
         if (href.isBlank()) return null
 
-        val title = a.attr("title").ifBlank {
-            this.selectFirst(".title, h2, h3, .entry-title")?.text()
-        }?.trim() ?: a.text().trim()
-
+        var title = a.attr("title").trim()
+        if (title.isBlank()) {
+            title = this.selectFirst(".title, h2, h3, .entry-title")?.text()?.trim().orEmpty()
+        }
+        if (title.isBlank()) {
+            title = a.text().trim()
+        }
         if (title.isBlank()) return null
 
-        val poster = this.selectFirst("img")?.let {
-            it.attr("abs:src").ifBlank { it.attr("abs:data-src") }
-                .ifBlank { it.attr("abs:data-lazy-src") }
+        val img = this.selectFirst("img")
+        var poster: String? = null
+        if (img != null) {
+            poster = img.attr("abs:src")
+            if (poster.isBlank()) poster = img.attr("abs:data-src")
+            if (poster.isBlank()) poster = img.attr("abs:data-lazy-src")
+            if (poster.isBlank()) poster = null
         }
 
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
@@ -61,8 +68,10 @@ class HentaiXPlanet : MainAPI() {
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
-        val title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.title().substringBefore("–").substringBefore("|").trim()
+        var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
+        if (title.isBlank()) {
+            title = document.title().substringBefore("–").substringBefore("|").trim()
+        }
 
         val poster = document.selectFirst("img.wp-post-image, .post-thumbnail img, article img")
             ?.attr("abs:src")
@@ -70,34 +79,41 @@ class HentaiXPlanet : MainAPI() {
         val description = document.selectFirst(".entry-content p, .post-content p, article p")
             ?.text()?.trim()
 
-        // إذا كانت صفحة تصنيف (series) نجلب الحلقات
         val episodes = if (url.contains("/category/")) {
             document.select("div.thumb-block").mapNotNull { el ->
                 val a = el.selectFirst("a[href]") ?: return@mapNotNull null
                 val href = fixUrl(a.attr("href"))
-                val text = a.attr("title").ifBlank { a.text() }.trim()
                 if (href.isBlank() || href.contains("/category/")) return@mapNotNull null
+
+                var text = a.attr("title").trim()
+                if (text.isBlank()) text = a.text().trim()
 
                 val epNum = Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                     ?: Regex("""(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                     ?: return@mapNotNull null
 
+                val epPoster = el.selectFirst("img")?.attr("abs:src")
+
                 newEpisode(href) {
-                    this.name = text.ifBlank { "الحلقة $epNum" }
+                    this.name = if (text.isNotBlank()) text else "الحلقة $epNum"
                     this.episode = epNum
-                    this.posterUrl = el.selectFirst("img")?.attr("abs:src")
+                    this.posterUrl = epPoster
                 }
             }.distinctBy { it.episode }.sortedBy { it.episode }
         } else {
             emptyList()
         }
 
-        val finalEpisodes = if (episodes.isNotEmpty()) episodes else listOf(
-            newEpisode(url) {
-                this.name = "الحلقة 1"
-                this.episode = 1
-            }
-        )
+        val finalEpisodes = if (episodes.isNotEmpty()) {
+            episodes
+        } else {
+            listOf(
+                newEpisode(url) {
+                    this.name = "الحلقة 1"
+                    this.episode = 1
+                }
+            )
+        }
 
         return newAnimeLoadResponse(title, url, TvType.NSFW) {
             this.posterUrl = poster
@@ -114,18 +130,16 @@ class HentaiXPlanet : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
         var found = false
-
-        // السيرفرات داخل iframe
-        val iframes = document.select("iframe[src], iframe[data-src]")
         var index = 1
+
+        val iframes = document.select("iframe[src], iframe[data-src]")
         for (iframe in iframes) {
-            val embedUrl = iframe.attr("abs:src").ifBlank {
-                iframe.attr("abs:data-src")
-            }.trim()
+            var embedUrl = iframe.attr("abs:src").trim()
+            if (embedUrl.isBlank()) embedUrl = iframe.attr("abs:data-src").trim()
             if (embedUrl.isBlank()) continue
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
 
-            val name = "Server $index"
+            val serverName = "Server $index"
             index++
 
             val extracted = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
@@ -134,8 +148,8 @@ class HentaiXPlanet : MainAPI() {
             } else {
                 callback.invoke(
                     newExtractorLink(
-                        source = this.name,
-                        name = name,
+                        source = name,
+                        name = serverName,
                         url = embedUrl
                     ) {
                         this.referer = mainUrl
