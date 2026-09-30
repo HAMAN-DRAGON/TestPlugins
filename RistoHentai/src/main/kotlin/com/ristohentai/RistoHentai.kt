@@ -29,10 +29,8 @@ class RistoHentai : MainAPI() {
         val href = fixUrl(a.attr("href"))
         if (href.isBlank() || !href.contains("/series/")) return null
 
-        val title = this.selectFirst("h4, h3, h2, .title h4, .title")?.text()?.trim()
-            ?.takeIf { it.isNotBlank() }
-            ?: a.attr("title").trim().takeIf { it.isNotBlank() }
-            ?: return null
+        val title = this.selectFirst("div.title h4, h4")?.text()?.trim()
+            ?.takeIf { it.isNotBlank() } ?: return null
 
         val style = this.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
@@ -45,7 +43,23 @@ class RistoHentai : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("$mainUrl/?s=$query").document
-        return document.select("div.MovieItem").mapNotNull { it.toSearchResult() }
+        return document.select("div.MovieItem").mapNotNull { el ->
+            val a = el.selectFirst("a") ?: return@mapNotNull null
+            val href = fixUrl(a.attr("href"))
+            if (href.isBlank()) return@mapNotNull null
+
+            val title = el.selectFirst("div.title h4, h4")?.text()?.trim()
+                ?.takeIf { it.isNotBlank() }
+                ?: a.text().trim().takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+
+            val style = el.selectFirst("div.poster, .poster")?.attr("style") ?: ""
+            val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
+
+            newAnimeSearchResponse(title, href, TvType.NSFW) {
+                this.posterUrl = poster
+            }
+        }
     }
 
     override suspend fun load(url: String): LoadResponse {
