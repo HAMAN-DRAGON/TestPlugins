@@ -26,10 +26,8 @@ class HentaiXPlanet : MainAPI() {
         else request.data.trimEnd('/') + "/page/$page/"
 
         val document = app.get(url).document
-        val home = document.select("article.thumb-block, article.loop-video")
-            .mapNotNull { it.toSearchResult() }
+        val home = document.select("div.thumb-block").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
-
         return newHomePageResponse(request.name, home)
     }
 
@@ -38,32 +36,22 @@ class HentaiXPlanet : MainAPI() {
         val href = fixUrl(a.attr("href"))
         if (href.isBlank()) return null
 
-        // تنظيف العنوان من &nbsp; والمسافات الزائدة
-        var title = a.attr("title")
-            .replace("\u00a0", " ")
-            .replace("&nbsp;", " ")
-            .trim()
-
+        var title = a.attr("title").trim()
         if (title.isBlank()) {
-            title = this.selectFirst("header.entry-header span, .entry-header, .title, h2, h3, .entry-title")
-                ?.text()
-                ?.replace("\u00a0", " ")
-                ?.trim()
-                .orEmpty()
+            title = this.selectFirst(".title, h2, h3, .entry-title")?.text()?.trim().orEmpty()
         }
         if (title.isBlank()) {
-            title = a.text().replace("\u00a0", " ").trim()
+            title = a.text().trim()
         }
         if (title.isBlank()) return null
 
-        // الصورة (الموقع يستخدم data-src بشكل أساسي)
         val img = this.selectFirst("img")
         var poster: String? = null
         if (img != null) {
-            poster = img.attr("abs:data-src").takeIf { it.isNotBlank() }
-                ?: img.attr("abs:src").takeIf { it.isNotBlank() }
-                ?: img.attr("abs:data-lazy-src").takeIf { it.isNotBlank() }
-                ?: img.attr("abs:data-original").takeIf { it.isNotBlank() }
+            poster = img.attr("abs:src")
+            if (poster.isBlank()) poster = img.attr("abs:data-src")
+            if (poster.isBlank()) poster = img.attr("abs:data-lazy-src")
+            if (poster.isBlank()) poster = null
         }
 
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
@@ -72,69 +60,39 @@ class HentaiXPlanet : MainAPI() {
     }
 
     override suspend fun search(query: String): List<SearchResponse> {
-        val document = app.get("\( mainUrl/?s= \){query.replace(" ", "+")}").document
-        return document.select("article.thumb-block, article.loop-video")
-            .mapNotNull { it.toSearchResult() }
+        val document = app.get("$mainUrl/?s=$query").document
+        return document.select("div.thumb-block").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
-        var title = document.selectFirst("h1.entry-title, h1")
-            ?.text()
-            ?.replace("\u00a0", " ")
-            ?.trim()
-            .orEmpty()
-
+        var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
         if (title.isBlank()) {
-            title = document.title()
-                .substringBefore("–")
-                .substringBefore("|")
-                .substringBefore("-")
-                .replace("\u00a0", " ")
-                .trim()
+            title = document.title().substringBefore("–").substringBefore("|").trim()
         }
 
-        val poster = document.selectFirst("img.wp-post-image, .post-thumbnail img, article img, .entry-content img")
-            ?.let { img ->
-                img.attr("abs:data-src").takeIf { it.isNotBlank() }
-                    ?: img.attr("abs:src").takeIf { it.isNotBlank() }
-                    ?: img.attr("abs:data-lazy-src").takeIf { it.isNotBlank() }
-            }
+        val poster = document.selectFirst("img.wp-post-image, .post-thumbnail img, article img")
+            ?.attr("abs:src")
 
-        val description = document.selectFirst(".entry-content p, .post-content p, article .entry-content p")
-            ?.text()
-            ?.trim()
+        val description = document.selectFirst(".entry-content p, .post-content p, article p")
+            ?.text()?.trim()
 
-        // إذا كانت الصفحة تصنيف (series) → نجمع الحلقات
-        val isCategory = url.contains("/category/") || 
-                         document.select("article.thumb-block, article.loop-video").size > 3
-
-        val episodes = if (isCategory) {
-            document.select("article.thumb-block, article.loop-video").mapNotNull { el ->
+        val episodes = if (url.contains("/category/")) {
+            document.select("div.thumb-block").mapNotNull { el ->
                 val a = el.selectFirst("a[href]") ?: return@mapNotNull null
                 val href = fixUrl(a.attr("href"))
-                if (href.isBlank() || href.contains("/category/") || href.contains("/tag/")) return@mapNotNull null
+                if (href.isBlank() || href.contains("/category/")) return@mapNotNull null
 
-                var text = a.attr("title")
-                    .replace("\u00a0", " ")
-                    .replace("&nbsp;", " ")
-                    .trim()
-                if (text.isBlank()) {
-                    text = a.text().replace("\u00a0", " ").trim()
-                }
+                var text = a.attr("title").trim()
+                if (text.isBlank()) text = a.text().trim()
 
-                val epNum = Regex("""حلقة\s*(\d+)""", RegexOption.IGNORE_CASE)
-                    .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    ?: Regex("""(?:ep|episode|حلقة)?\s*(\d+)""", RegexOption.IGNORE_CASE)
-                        .find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                val epNum = Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                    ?: Regex("""(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                     ?: return@mapNotNull null
 
-                val epPoster = el.selectFirst("img")?.let { img ->
-                    img.attr("abs:data-src").takeIf { it.isNotBlank() }
-                        ?: img.attr("abs:src").takeIf { it.isNotBlank() }
-                }
+                val epPoster = el.selectFirst("img")?.attr("abs:src")
 
                 newEpisode(href) {
                     this.name = if (text.isNotBlank()) text else "الحلقة $epNum"
@@ -149,7 +107,6 @@ class HentaiXPlanet : MainAPI() {
         val finalEpisodes = if (episodes.isNotEmpty()) {
             episodes
         } else {
-            // حلقة واحدة (صفحة الحلقة نفسها)
             listOf(
                 newEpisode(url) {
                     this.name = "الحلقة 1"
@@ -175,20 +132,12 @@ class HentaiXPlanet : MainAPI() {
         var found = false
         var index = 1
 
-        // جمع كل الـ iframes (src و data-src)
-        val iframes = document.select("iframe[src], iframe[data-src], iframe[data-lazy-src]")
+        val iframes = document.select("iframe[src], iframe[data-src]")
         for (iframe in iframes) {
             var embedUrl = iframe.attr("abs:src").trim()
             if (embedUrl.isBlank()) embedUrl = iframe.attr("abs:data-src").trim()
-            if (embedUrl.isBlank()) embedUrl = iframe.attr("abs:data-lazy-src").trim()
             if (embedUrl.isBlank()) continue
-
-            // تجاهل يوتيوب وفيسبوك والإعلانات
-            if (embedUrl.contains("youtube", true) ||
-                embedUrl.contains("facebook", true) ||
-                embedUrl.contains("doubleclick", true) ||
-                embedUrl.contains("googlesyndication", true)
-            ) continue
+            if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
 
             val serverName = "Server $index"
             index++
@@ -197,7 +146,6 @@ class HentaiXPlanet : MainAPI() {
             if (extracted) {
                 found = true
             } else {
-                // fallback مباشر
                 callback.invoke(
                     newExtractorLink(
                         source = name,
@@ -211,7 +159,6 @@ class HentaiXPlanet : MainAPI() {
                 found = true
             }
         }
-
         return found
     }
 }
