@@ -1,0 +1,8 @@
+{
+  "name": "RistoHentai Repo",
+  "description": "إضافة RistoHentai",
+  "manifestVersion": 1,
+  "pluginLists": [
+    "https://raw.githubusercontent.com/HAMAN-DRAGON/TestPlugins/builds/plugins.json"
+  ]
+}
