@@ -30,31 +30,13 @@ class RistoHentai : MainAPI() {
         if (href.isBlank() || !href.contains("/series/")) return null
 
         val title = this.selectFirst("h4, h3, h2, .title h4, .title")?.text()?.trim()
-            ?: a.attr("title").trim()
+            ?.takeIf { it.isNotBlank() }
+            ?: a.attr("title").trim().takeIf { it.isNotBlank() }
             ?: return null
-
-        if (title.isBlank()) return null
 
         val style = this.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
             ?: Regex("url\\(&quot;(.*?)&quot;\\)").find(style)?.groupValues?.getOrNull(1)
-
-        return newAnimeSearchResponse(title, href, TvType.NSFW) {
-            this.posterUrl = poster
-        }
-    }
-        val a = this.selectFirst("a") ?: return null
-        val href = fixUrl(a.attr("href"))
-        if (href.isBlank()) return null
-
-        val title = a.attr("title").ifBlank {
-            this.selectFirst("h3, h2")?.text()
-        }?.trim() ?: return null
-
-        if (title.isBlank()) return null
-
-        val style = this.selectFirst("div.poster, .poster")?.attr("style") ?: ""
-        val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
 
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
@@ -122,12 +104,10 @@ class RistoHentai : MainAPI() {
         for (li in servers) {
             val embedUrl = li.attr("data-watch").trim()
             if (embedUrl.isBlank()) continue
-
             if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
             }
         }
-
         return found
     }
 }
