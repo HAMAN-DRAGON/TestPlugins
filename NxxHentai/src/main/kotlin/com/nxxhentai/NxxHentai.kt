@@ -51,7 +51,9 @@ class NxxHentai : MainAPI() {
 
         var title = a.attr("title").trim()
         if (title.isBlank()) title = a.text().trim()
-        if (title.isBlank()) title = this.selectFirst("h2, h3, .title, .entry-title")?.text()?.trim().orEmpty()
+        if (title.isBlank()) {
+            title = this.selectFirst("h2, h3, .title, .entry-title")?.text()?.trim().orEmpty()
+        }
         if (title.isBlank()) return null
 
         val img = this.selectFirst("img")
@@ -92,7 +94,6 @@ class NxxHentai : MainAPI() {
         val description = document.selectFirst(".entry-content p, .description p, .synopsis, article p")
             ?.text()?.trim()
 
-        // حلقات من روابط /episodes/
         val episodes = document.select("a[href*=/episodes/]").mapNotNull { a ->
             val href = fixUrl(a.attr("href"))
             val text = a.text().trim().ifBlank { a.attr("title").trim() }
@@ -125,6 +126,31 @@ class NxxHentai : MainAPI() {
         }
     }
 
+    private suspend fun resolveLink(url: String): String? {
+        return try {
+            val res = app.get(url, allowRedirects = true)
+            val finalUrl = res.url
+            if (finalUrl != url && finalUrl.startsWith("http") && !finalUrl.contains("nxxhentai.net/links/")) {
+                return finalUrl
+            }
+            val doc = res.document
+            val iframe = doc.selectFirst("iframe[src], iframe[data-src]")
+            if (iframe != null) {
+                var src = iframe.attr("abs:src")
+                if (src.isBlank()) src = iframe.attr("abs:data-src")
+                if (src.isNotBlank()) return src
+            }
+            val a = doc.selectFirst("a[href*=http]")
+            if (a != null) {
+                val href = a.attr("abs:href")
+                if (href.isNotBlank() && !href.contains("nxxhentai.net/links/")) return href
+            }
+            null
+        } catch (_: Exception) {
+            null
+        }
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -134,48 +160,73 @@ class NxxHentai : MainAPI() {
         val document = app.get(data).document
         var found = false
         var index = 1
-        val links = linkedSetOf<String>()
+        val candidates = linkedSetOf<Pair<String, String>>() // name to url
 
-        // iframes
-        document.select("iframe[src], iframe[data-src]").forEach { iframe ->
-            var u = iframe.attr("abs:src").trim()
-            if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
-            if (u.isNotBlank()) links.add(u)
-        }
-
-        // data attributes شائعة للسيرفرات
-        document.select("[data-src], [data-url], [data-embed], [data-link], [data-video]").forEach { el ->
-            listOf("data-src", "data-url", "data-embed", "data-link", "data-video").forEach { attr ->
-                val v = el.attr(attr).trim()
-                if (v.startsWith("http")) links.add(v)
+        // 1) روابط التحميل /links/
+        document.select("a[href*=/links/]").forEach { a ->
+            val href = fixUrl(a.attr("href"))
+            val label = a.text().trim().ifBlank { "Download $index" }
+            if (href.isNotBlank()) {
+                val resolved = resolveLink(href)
+                if (!resolved.isNullOrBlank()) {
+                    candidates.add(label to resolved)
+                } else {
+                    candidates.add(label to href)
+                }
             }
         }
 
-        // روابط من مصدر الصفحة
+        // 2) أزرار/عناصر السيرفرات
+        document.select(
+            "[data-src], [data-url], [data-embed], [data-link], [data-video], [data-player], " +
+                ".server, .servers li, .player-server, button[data-id], a[data-embed]"
+        ).forEach { el ->
+            val label = el.text().trim().take(30).ifBlank { "Server $index" }
+            listOf("data-src", "data-url", "data-embed", "data-link", "data-video", "data-player", "href").forEach { attr ->
+                var v = el.attr(attr).trim()
+                if (v.startsWith("//")) v = "https:$v"
+                if (v.startsWith("http")) {
+                    candidates.add(label to v)
+                }
+            }
+        }
+
+        // 3) iframes
+        document.select("iframe[src], iframe[data-src]").forEach { iframe ->
+            var u = iframe.attr("abs:src").trim()
+            if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
+            if (u.isNotBlank()) candidates.add("Iframe $index" to u)
+        }
+
+        // 4) من مصدر الصفحة
         val html = document.html()
         Regex("""https?://[^\s"'<>]+""").findAll(html).forEach { m ->
             val u = m.value
-            if (u.contains("embed", true) ||
+            if (
+                u.contains("embed", true) ||
                 u.contains("/e/") ||
                 u.contains("streamhg", true) ||
                 u.contains("streamtape") ||
                 u.contains("voe.sx") ||
                 u.contains("mega.nz") ||
+                u.contains("upn.") ||
                 u.contains("player", true)
             ) {
                 if (!u.contains("oembed") && !u.contains("wp-json") && !u.contains("cloudflare")) {
-                    links.add(u)
+                    candidates.add("Embed $index" to u)
                 }
             }
         }
 
-        for (embedUrl in links) {
+        for ((label, embedUrl) in candidates) {
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
+            if (embedUrl.contains("nxxhentai.net/links/")) continue
 
-            val name = "Server $index"
+            val name = label.ifBlank { "Server $index" }
             index++
 
-            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
+            val ok = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
+            if (ok) {
                 found = true
             } else {
                 callback.invoke(
