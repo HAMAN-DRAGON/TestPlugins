@@ -2,9 +2,7 @@ package com.hentaibalo
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
-import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
-import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 class HentaiBalo : MainAPI() {
@@ -38,7 +36,6 @@ class HentaiBalo : MainAPI() {
         val href = fixUrl(a.attr("href"))
         if (href.isBlank()) return null
 
-        // في قائمة series نفضل روابط المسلسلات
         val title = this.selectFirst("div.title h4, h4")?.text()?.trim()
             ?.takeIf { it.isNotBlank() } ?: return null
 
@@ -87,17 +84,19 @@ class HentaiBalo : MainAPI() {
 
         val description = document.selectFirst("p")?.text()?.trim()
 
-        val episodes = document.select(".EpisodesList a, ul.EpisodesList a, .episodes a, a[href]").mapNotNull { a ->
+        // حلقات المسلسل فقط — بدون روابط عشوائية
+        val episodes = document.select(".EpisodesList a, ul.EpisodesList a").mapNotNull { a ->
             val text = a.text().trim()
             val href = fixUrl(a.attr("href"))
-            if (href.isBlank() || !href.contains("hentaibalo.com")) return@mapNotNull null
-            if (!text.contains("حلق") && !text.contains("episode", true)) return@mapNotNull null
+            if (href.isBlank()) return@mapNotNull null
 
-            val epNum = Regex("(\\d+)").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val epNum = Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: Regex("""^(\d+)$""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
 
             newEpisode(href) {
-                this.name = text.ifBlank { "الحلقة $epNum" }
+                this.name = "الحلقة $epNum"
                 this.episode = epNum
             }
         }.distinctBy { it.episode }.sortedBy { it.episode }
@@ -116,6 +115,18 @@ class HentaiBalo : MainAPI() {
         }
     }
 
+    private fun cleanEmbedUrl(url: String): String {
+        var u = url.trim()
+        // تنظيف روابط MEGA الشائعة على الموقع
+        if (u.contains("mega.nz")) {
+            u = u.removeSuffix(".html")
+            if (u.contains("/embed/")) {
+                u = u.replace("/embed/", "/file/")
+            }
+        }
+        return u
+    }
+
     override suspend fun loadLinks(
         data: String,
         isCasting: Boolean,
@@ -127,28 +138,23 @@ class HentaiBalo : MainAPI() {
         val servers = document.select("li[data-watch]")
         var found = false
 
-        for (li in servers) {
-            val embedUrl = li.attr("data-watch").trim()
-            if (embedUrl.isBlank()) continue
+        // رتّب السيرفرات: MEGA أولاً ثم الباقي
+        val sorted = servers.sortedByDescending { li ->
+            val u = li.attr("data-watch")
+            when {
+                u.contains("mega.nz") -> 3
+                u.contains("savemavo") -> 2
+                u.contains("streamtape") || u.contains("voe.sx") -> 1
+                else -> 0
+            }
+        }
 
-            val serverName = li.ownText().trim()
-                .ifBlank { li.text().trim() }
-                .ifBlank { "Server" }
+        for (li in sorted) {
+            val raw = li.attr("data-watch").trim()
+            if (raw.isBlank()) continue
+            val embedUrl = cleanEmbedUrl(raw)
 
-            val extracted = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-            if (extracted) {
-                found = true
-            } else {
-                callback.invoke(
-                    newExtractorLink(
-                        source = name,
-                        name = serverName,
-                        url = embedUrl
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
+            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
             }
         }
