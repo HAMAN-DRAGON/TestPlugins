@@ -65,6 +65,29 @@ class HentaiXPlanet : MainAPI() {
             .distinctBy { it.url }
     }
 
+    private fun parseEpisodesFromCategory(document: org.jsoup.nodes.Document): List<Episode> {
+        return document.select("article.thumb-block, .thumb-block").mapNotNull { el ->
+            val a = el.selectFirst("a[href]") ?: return@mapNotNull null
+            val href = fixUrl(a.attr("href"))
+            if (href.isBlank() || href.contains("/category/")) return@mapNotNull null
+
+            var text = a.attr("title").trim()
+            if (text.isBlank()) text = a.text().trim()
+
+            val epNum = Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: Regex("""(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: return@mapNotNull null
+
+            val epPoster = el.selectFirst("img")?.attr("abs:src")
+
+            newEpisode(href) {
+                this.name = if (text.isNotBlank()) text else "الحلقة $epNum"
+                this.episode = epNum
+                this.posterUrl = epPoster
+            }
+        }.distinctBy { it.episode }.sortedBy { it.episode }
+    }
+
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
@@ -79,35 +102,33 @@ class HentaiXPlanet : MainAPI() {
         val description = document.selectFirst(".entry-content p, .post-content p, article p")
             ?.text()?.trim()
 
-        val episodes = if (url.contains("/category/")) {
-            document.select("article.thumb-block, .thumb-block").mapNotNull { el ->
-                val a = el.selectFirst("a[href]") ?: return@mapNotNull null
-                val href = fixUrl(a.attr("href"))
-                if (href.isBlank() || href.contains("/category/")) return@mapNotNull null
+        var episodes = emptyList<Episode>()
 
-                var text = a.attr("title").trim()
-                if (text.isBlank()) text = a.text().trim()
-
-                val epNum = Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    ?: Regex("""(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                    ?: return@mapNotNull null
-
-                val epPoster = el.selectFirst("img")?.attr("abs:src")
-
-                newEpisode(href) {
-                    this.name = if (text.isNotBlank()) text else "الحلقة $epNum"
-                    this.episode = epNum
-                    this.posterUrl = epPoster
-                }
-            }.distinctBy { it.episode }.sortedBy { it.episode }
+        if (url.contains("/category/")) {
+            episodes = parseEpisodesFromCategory(document)
         } else {
-            emptyList()
+            // صفحة حلقة: ابحث عن رابط المسلسل الكامل
+            val seriesLink = document.select("a[href*=/category/]").firstOrNull { a ->
+                val t = a.text()
+                t.contains("جميع حلقات") || t.contains("عرض المزيد")
+            }?.attr("abs:href")
+
+            if (!seriesLink.isNullOrBlank()) {
+                val seriesDoc = app.get(seriesLink).document
+                episodes = parseEpisodesFromCategory(seriesDoc)
+
+                // عنوان أنظف من صفحة التصنيف إن أمكن
+                val seriesTitle = seriesDoc.selectFirst("h1")?.text()?.trim()
+                if (!seriesTitle.isNullOrBlank()) {
+                    title = seriesTitle
+                        .removePrefix("التصنيف:")
+                        .trim()
+                }
+            }
         }
 
-        val finalEpisodes = if (episodes.isNotEmpty()) {
-            episodes
-        } else {
-            listOf(
+        if (episodes.isEmpty()) {
+            episodes = listOf(
                 newEpisode(url) {
                     this.name = "الحلقة 1"
                     this.episode = 1
@@ -118,7 +139,7 @@ class HentaiXPlanet : MainAPI() {
         return newAnimeLoadResponse(title, url, TvType.NSFW) {
             this.posterUrl = poster
             this.plot = description
-            addEpisodes(DubStatus.Subbed, finalEpisodes)
+            addEpisodes(DubStatus.Subbed, episodes)
         }
     }
 
@@ -131,12 +152,38 @@ class HentaiXPlanet : MainAPI() {
         val document = app.get(data).document
         var found = false
         var index = 1
+        val links = mutableSetOf<String>()
 
-        val iframes = document.select("iframe[src], iframe[data-src]")
-        for (iframe in iframes) {
+        // 1) iframes
+        document.select("iframe[src], iframe[data-src]").forEach { iframe ->
             var embedUrl = iframe.attr("abs:src").trim()
             if (embedUrl.isBlank()) embedUrl = iframe.attr("abs:data-src").trim()
-            if (embedUrl.isBlank()) continue
+            if (embedUrl.isNotBlank()) links.add(embedUrl)
+        }
+
+        // 2) روابط من مصدر الصفحة
+        val html = document.html()
+        val regex = Regex("""https?://[^\s"'<>]+""")
+        regex.findAll(html).forEach { match ->
+            val u = match.value
+            if (u.contains("embed", true) ||
+                u.contains("/e/") ||
+                u.contains("savemavo") ||
+                u.contains("hglamioz") ||
+                u.contains("rubyvid") ||
+                u.contains("playmogo") ||
+                u.contains("upn.one") ||
+                u.contains("streamtape") ||
+                u.contains("voe.sx") ||
+                u.contains("abyss")
+            ) {
+                if (!u.contains("oembed") && !u.contains("wp-json")) {
+                    links.add(u)
+                }
+            }
+        }
+
+        for (embedUrl in links) {
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
 
             val serverName = "Server $index"
