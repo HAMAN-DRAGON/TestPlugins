@@ -24,7 +24,7 @@ class HentaiXPlanet : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) request.data else request.data.trimEnd('/') + "/page/$page/"
         val document = app.get(url).document
-        val home = document.select("article.thumb-block, .thumb-block, article").mapNotNull { it.toSearchResult() }
+        val home = document.select("article.thumb-block, .thumb-block").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
         return newHomePageResponse(request.name, home)
     }
@@ -51,7 +51,7 @@ class HentaiXPlanet : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("$mainUrl/?s=$query").document
-        return document.select("article.thumb-block, .thumb-block, article").mapNotNull { it.toSearchResult() }
+        return document.select("article.thumb-block, .thumb-block").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
     }
 
@@ -63,7 +63,6 @@ class HentaiXPlanet : MainAPI() {
         val poster = document.selectFirst("img.wp-post-image, .poster img, article img")?.attr("abs:src")
         val description = document.selectFirst(".entry-content p, article p")?.text()?.trim()
 
-        // إن كانت صفحة حلقة مفردة، حاول صفحة التصنيف "جميع حلقات"
         val seriesLink = document.select("a").firstOrNull { a ->
             val t = a.text()
             t.contains("جميع حلقات") || t.contains("كل الحلقات")
@@ -73,11 +72,11 @@ class HentaiXPlanet : MainAPI() {
             try { app.get(seriesLink).document } catch (e: Exception) { document }
         } else document
 
-        val episodes = episodeDoc.select("article.thumb-block a, .thumb-block a, a[href]").mapNotNull { a ->
+        val episodes = episodeDoc.select("article.thumb-block a, .thumb-block a").mapNotNull { a ->
             val href = fixUrl(a.attr("href"))
-            val text = a.text().trim().ifBlank { a.attr("title").trim() }
+            var text = a.text().trim()
+            if (text.isBlank()) text = a.attr("title").trim()
             if (href.isBlank()) return@mapNotNull null
-            if (!href.contains("hentaixplanet.com")) return@mapNotNull null
             val epNum = Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""حلقة\s*(\d+)""").find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
@@ -102,15 +101,8 @@ class HentaiXPlanet : MainAPI() {
         }
     }
 
-    private fun cleanUrl(url: String): String {
-        var u = url.trim()
-        if (u.contains("mega.nz")) u = u.removeSuffix(".html")
-        return u
-    }
-
     private fun hostName(url: String): String {
         return when {
-            url.contains("mega.nz") -> "MEGA"
             url.contains("dood") -> "DoodStream"
             url.contains("streamtape") -> "Streamtape"
             url.contains("voe.sx") -> "VOE"
@@ -119,23 +111,34 @@ class HentaiXPlanet : MainAPI() {
             url.contains("upn.") -> "UPN"
             url.contains("savemavo") -> "SaveMavo"
             url.contains("hglamioz") -> "Hglamioz"
+            url.contains("mega.nz") -> "MEGA"
             else -> "Server"
         }
     }
 
     private fun priority(url: String): Int {
         return when {
-            url.contains("mega.nz") -> 10
-            url.contains("dood") -> 9
-            url.contains("streamtape") -> 8
-            url.contains("voe.sx") -> 7
-            url.contains("rubyvid") -> 6
-            url.contains("playmogo") -> 5
-            url.contains("upn.") -> 4
-            url.contains("savemavo") -> 2
-            url.contains("hglamioz") -> 1
+            url.contains("dood") -> 10
+            url.contains("streamtape") -> 9
+            url.contains("voe.sx") -> 8
+            url.contains("rubyvid") -> 7
+            url.contains("playmogo") -> 6
+            url.contains("upn.") -> 5
+            url.contains("savemavo") -> 3
+            url.contains("hglamioz") -> 2
+            url.contains("mega.nz") -> 1
             else -> 0
         }
+    }
+
+    private fun isProbablyVideo(url: String): Boolean {
+        val u = url.lowercase()
+        if (u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".png") ||
+            u.endsWith(".webp") || u.endsWith(".gif") || u.endsWith(".svg")
+        ) return false
+        if (u.contains("wp-content/uploads")) return false
+        if (u.contains("youtube") || u.contains("facebook")) return false
+        return true
     }
 
     override suspend fun loadLinks(
@@ -148,25 +151,29 @@ class HentaiXPlanet : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
+        // iframes فقط — لا تلتقط صور data-src
         document.select("iframe[src], iframe[data-src]").forEach { iframe ->
             var u = iframe.attr("abs:src").trim()
             if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
-            if (u.isNotBlank()) candidates.add(cleanUrl(u))
+            if (u.isNotBlank() && isProbablyVideo(u)) candidates.add(u)
         }
 
-        document.select("[data-src], [data-url], [data-embed], [data-watch]").forEach { el ->
-            listOf("data-src", "data-url", "data-embed", "data-watch").forEach { attr ->
+        // خصائص التضمين فقط
+        document.select("[data-embed], [data-watch], [data-url]").forEach { el ->
+            listOf("data-embed", "data-watch", "data-url").forEach { attr ->
                 var v = el.attr(attr).trim()
                 if (v.startsWith("//")) v = "https:$v"
-                if (v.startsWith("http")) candidates.add(cleanUrl(v))
+                if (v.startsWith("http") && isProbablyVideo(v)) candidates.add(v)
             }
         }
 
         val sorted = candidates.sortedByDescending { priority(it) }
 
         for (embedUrl in sorted) {
-            if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
             val name = hostName(embedUrl)
+
+            // تخطّي MEGA لأنه غالبًا لا يعمل في CloudStream
+            if (embedUrl.contains("mega.nz")) continue
 
             if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
