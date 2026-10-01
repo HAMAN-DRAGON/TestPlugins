@@ -18,7 +18,7 @@ class RistoHentai : MainAPI() {
     override val mainPage = mainPageOf(
         "$mainUrl/series/" to "كل المسلسلات",
         "$mainUrl/%D9%87%D9%86%D8%AA%D8%A7%D9%8A-%D8%A8%D8%AF%D9%88%D9%86-%D8%AD%D8%AC%D8%A8/" to "بدون حجب",
-        "$mainUrl/" to "أحدث الحلقات"
+        "$mainUrl/" to "الأحدث"
     )
 
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
@@ -39,14 +39,11 @@ class RistoHentai : MainAPI() {
         if (href.isBlank()) return null
 
         val title = this.selectFirst("div.title h4, h4")?.text()?.trim()
-            ?.takeIf { it.isNotBlank() } ?: return null
+        if (title.isNullOrBlank()) return null
 
-        val style = this.selectFirst("div.poster, .poster")?.attr("style")
-            ?: this.selectFirst("div.poster, .poster")?.attr("data-style")
-            ?: ""
+        val style = this.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
             ?: Regex("url\\(&quot;(.*?)&quot;\\)").find(style)?.groupValues?.getOrNull(1)
-            ?: Regex("url\\((https?://[^)]+)\\)").find(style)?.groupValues?.getOrNull(1)
 
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
@@ -55,50 +52,105 @@ class RistoHentai : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("$mainUrl/?s=$query").document
-        return document.select("div.MovieItem").mapNotNull { it.toSearchResult() }
-            .distinctBy { it.url }
+        return document.select("div.MovieItem").mapNotNull { el ->
+            val a = el.selectFirst("a") ?: return@mapNotNull null
+            val href = fixUrl(a.attr("href"))
+            if (href.isBlank()) return@mapNotNull null
+
+            var title = el.selectFirst("div.title h4, h4")?.text()?.trim().orEmpty()
+            if (title.isBlank()) title = a.text().trim()
+            if (title.isBlank()) return@mapNotNull null
+
+            val style = el.selectFirst("div.poster, .poster")?.attr("style") ?: ""
+            val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
+
+            newAnimeSearchResponse(title, href, TvType.NSFW) {
+                this.posterUrl = poster
+            }
+        }.distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
-        val title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.selectFirst("div.PostTitle h1, .PostTitle")?.text()?.trim()
-            ?: document.title().substringBefore("|").trim()
+        var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
+        if (title.isBlank()) {
+            title = document.title().substringBefore("|").trim()
+        }
 
         val posterStyle = document.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = document.selectFirst("img[src*=wp-content]")?.attr("abs:src")
             ?: Regex("url\\((['\"]?)(.*?)\\1\\)").find(posterStyle)?.groupValues?.getOrNull(2)
 
-        val description = document.selectFirst(".story p, .Story p, p")?.text()?.trim()
+        val description = document.selectFirst("p")?.text()?.trim()
 
-        // حلقات من قائمة الحلقات فقط
-        val episodes = document.select(".EpisodesList a, ul.EpisodesList a, .episodes a").mapNotNull { a ->
+        val episodes = document.select(".EpisodesList a, ul.EpisodesList a").mapNotNull { a ->
             val text = a.text().trim()
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@mapNotNull null
 
-            val epNum = Regex("(\\d+)").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            val epNum = Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+                ?: Regex("""^(\d+)$""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
 
             newEpisode(href) {
-                this.name = text.ifBlank { "الحلقة $epNum" }
+                this.name = "الحلقة $epNum"
                 this.episode = epNum
             }
         }.distinctBy { it.episode }.sortedBy { it.episode }
 
-        // إذا لم نجد قائمة حلقات (صفحة حلقة واحدة من البحث)
-        val finalEpisodes = if (episodes.isNotEmpty()) episodes else listOf(
-            newEpisode(url) {
-                this.name = "الحلقة 1"
-                this.episode = 1
-            }
-        )
+        val finalEpisodes = if (episodes.isNotEmpty()) {
+            episodes
+        } else {
+            listOf(
+                newEpisode(url) {
+                    this.name = "الحلقة 1"
+                    this.episode = 1
+                }
+            )
+        }
 
         return newAnimeLoadResponse(title, url, TvType.NSFW) {
             this.posterUrl = poster
             this.plot = description
             addEpisodes(DubStatus.Subbed, finalEpisodes)
+        }
+    }
+
+    private fun cleanUrl(url: String): String {
+        var u = url.trim()
+        if (u.contains("mega.nz")) {
+            u = u.removeSuffix(".html")
+        }
+        return u
+    }
+
+    private fun hostName(url: String): String {
+        return when {
+            url.contains("voe.sx") -> "VOE"
+            url.contains("streamtape") -> "Streamtape"
+            url.contains("mega.nz") -> "MEGA"
+            url.contains("rubyvid") -> "RubyVid"
+            url.contains("playmogo") -> "PlayMogo"
+            url.contains("abyssplayer") -> "Abyss"
+            url.contains("hglamioz") -> "Hglamioz"
+            url.contains("ristohentai.site") -> "RistoPlayer"
+            else -> "Server"
+        }
+    }
+
+    private fun priority(url: String): Int {
+        return when {
+            url.contains("voe.sx") -> 10
+            url.contains("streamtape") -> 9
+            url.contains("mega.nz") -> 8
+            url.contains("rubyvid") -> 5
+            url.contains("playmogo") -> 4
+            url.contains("abyssplayer") -> 3
+            url.contains("ristohentai.site") -> 2
+            url.contains("hglamioz") -> 1
+            else -> 0
         }
     }
 
@@ -113,25 +165,22 @@ class RistoHentai : MainAPI() {
         val servers = document.select("li[data-watch]")
         var found = false
 
-        for (li in servers) {
-            val embedUrl = li.attr("data-watch").trim()
-            if (embedUrl.isBlank()) continue
+        val sorted = servers.sortedByDescending { priority(it.attr("data-watch")) }
 
-            val serverName = li.ownText().trim()
-                .ifBlank { li.text().trim() }
-                .replace(Regex("<.*?>"), "")
-                .ifBlank { "Server" }
+        for (li in sorted) {
+            val raw = li.attr("data-watch").trim()
+            if (raw.isBlank()) continue
+            val embedUrl = cleanUrl(raw)
+            val name = hostName(embedUrl)
 
-            // جرب المستخرجات المدمجة أولاً
-            val extracted = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-            if (extracted) {
+            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
             } else {
-                // إن لم ينجح، أضف الرابط مباشرة كخيار
+                // إبقاء السيرفر ظاهرًا حتى لو فشل المستخرج
                 callback.invoke(
                     newExtractorLink(
-                        source = name,
-                        name = serverName,
+                        source = this.name,
+                        name = name,
                         url = embedUrl
                     ) {
                         this.referer = mainUrl
