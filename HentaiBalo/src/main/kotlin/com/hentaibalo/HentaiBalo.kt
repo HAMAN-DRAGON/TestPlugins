@@ -37,17 +37,11 @@ class HentaiBalo : MainAPI() {
         val a = this.selectFirst("a") ?: return null
         val href = fixUrl(a.attr("href"))
         if (href.isBlank()) return null
-
         val title = this.selectFirst("div.title h4, h4")?.text()?.trim()
-            ?.takeIf { it.isNotBlank() } ?: return null
-
-        val style = this.selectFirst("div.poster, .poster")?.attr("style")
-            ?: this.selectFirst("div.poster, .poster")?.attr("data-style")
-            ?: ""
+        if (title.isNullOrBlank()) return null
+        val style = this.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
             ?: Regex("url\\(&quot;(.*?)&quot;\\)").find(style)?.groupValues?.getOrNull(1)
-            ?: Regex("url\\((https?://[^)]+)\\)").find(style)?.groupValues?.getOrNull(1)
-
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
@@ -59,15 +53,11 @@ class HentaiBalo : MainAPI() {
             val a = el.selectFirst("a") ?: return@mapNotNull null
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@mapNotNull null
-
-            val title = el.selectFirst("div.title h4, h4")?.text()?.trim()
-                ?.takeIf { it.isNotBlank() }
-                ?: a.text().trim().takeIf { it.isNotBlank() }
-                ?: return@mapNotNull null
-
+            var title = el.selectFirst("div.title h4, h4")?.text()?.trim().orEmpty()
+            if (title.isBlank()) title = a.text().trim()
+            if (title.isBlank()) return@mapNotNull null
             val style = el.selectFirst("div.poster, .poster")?.attr("style") ?: ""
             val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
-
             newAnimeSearchResponse(title, href, TvType.NSFW) {
                 this.posterUrl = poster
             }
@@ -76,27 +66,21 @@ class HentaiBalo : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-
-        val title = document.selectFirst("h1")?.text()?.trim()
-            ?: document.title().substringBefore("|").trim()
-
+        var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
+        if (title.isBlank()) title = document.title().substringBefore("|").trim()
         val posterStyle = document.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = document.selectFirst("img[src*=wp-content]")?.attr("abs:src")
             ?: Regex("url\\((['\"]?)(.*?)\\1\\)").find(posterStyle)?.groupValues?.getOrNull(2)
-
         val description = document.selectFirst("p")?.text()?.trim()
 
-        // حلقات المسلسل فقط
         val episodes = document.select(".EpisodesList a, ul.EpisodesList a").mapNotNull { a ->
             val text = a.text().trim()
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@mapNotNull null
-
             val epNum = Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""^(\d+)$""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
-
             newEpisode(href) {
                 this.name = "الحلقة $epNum"
                 this.episode = epNum
@@ -117,24 +101,37 @@ class HentaiBalo : MainAPI() {
         }
     }
 
-    private fun cleanEmbedUrl(url: String): String {
+    private fun cleanUrl(url: String): String {
         var u = url.trim()
-        if (u.contains("mega.nz")) {
-            u = u.removeSuffix(".html")
-        }
+        if (u.contains("mega.nz")) u = u.removeSuffix(".html")
         return u
     }
 
-    private fun serverLabel(url: String, index: Int): String {
+    private fun hostName(url: String): String {
         return when {
             url.contains("mega.nz") -> "MEGA"
-            url.contains("savemavo") -> "Server 0"
             url.contains("streamtape") -> "Streamtape"
             url.contains("voe.sx") -> "VOE"
             url.contains("rubyvid") -> "RubyVid"
             url.contains("playmogo") -> "PlayMogo"
-            url.contains("hglamioz") -> "Server $index"
-            else -> "Server $index"
+            url.contains("turbovid") -> "TurboVid"
+            url.contains("savemavo") -> "SaveMavo"
+            url.contains("hglamioz") -> "Hglamioz"
+            else -> "Server"
+        }
+    }
+
+    private fun priority(url: String): Int {
+        return when {
+            url.contains("mega.nz") -> 10
+            url.contains("streamtape") -> 9
+            url.contains("voe.sx") -> 8
+            url.contains("rubyvid") -> 6
+            url.contains("playmogo") -> 5
+            url.contains("turbovid") -> 4
+            url.contains("savemavo") -> 2
+            url.contains("hglamioz") -> 1
+            else -> 0
         }
     }
 
@@ -148,21 +145,18 @@ class HentaiBalo : MainAPI() {
         val document = app.get(watchUrl).document
         val servers = document.select("li[data-watch]")
         var found = false
-        var index = 0
 
-        for (li in servers) {
+        val sorted = servers.sortedByDescending { priority(it.attr("data-watch")) }
+
+        for (li in sorted) {
             val raw = li.attr("data-watch").trim()
             if (raw.isBlank()) continue
-            val embedUrl = cleanEmbedUrl(raw)
-            val name = serverLabel(embedUrl, index)
-            index++
+            val embedUrl = cleanUrl(raw)
+            val name = hostName(embedUrl)
 
-            // جرب المستخرج أولاً
-            val ok = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-            if (ok) {
+            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
             } else {
-                // أظهر السيرفر حتى لو فشل المستخرج
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
