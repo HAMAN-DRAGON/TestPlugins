@@ -2,7 +2,9 @@ package com.hentaibalo
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
+import com.lagradost.cloudstream3.utils.newExtractorLink
 import org.jsoup.nodes.Element
 
 class HentaiBalo : MainAPI() {
@@ -84,7 +86,7 @@ class HentaiBalo : MainAPI() {
 
         val description = document.selectFirst("p")?.text()?.trim()
 
-        // حلقات المسلسل فقط — بدون روابط عشوائية
+        // حلقات المسلسل فقط
         val episodes = document.select(".EpisodesList a, ul.EpisodesList a").mapNotNull { a ->
             val text = a.text().trim()
             val href = fixUrl(a.attr("href"))
@@ -117,14 +119,23 @@ class HentaiBalo : MainAPI() {
 
     private fun cleanEmbedUrl(url: String): String {
         var u = url.trim()
-        // تنظيف روابط MEGA الشائعة على الموقع
         if (u.contains("mega.nz")) {
             u = u.removeSuffix(".html")
-            if (u.contains("/embed/")) {
-                u = u.replace("/embed/", "/file/")
-            }
         }
         return u
+    }
+
+    private fun serverLabel(url: String, index: Int): String {
+        return when {
+            url.contains("mega.nz") -> "MEGA"
+            url.contains("savemavo") -> "Server 0"
+            url.contains("streamtape") -> "Streamtape"
+            url.contains("voe.sx") -> "VOE"
+            url.contains("rubyvid") -> "RubyVid"
+            url.contains("playmogo") -> "PlayMogo"
+            url.contains("hglamioz") -> "Server $index"
+            else -> "Server $index"
+        }
     }
 
     override suspend fun loadLinks(
@@ -137,24 +148,31 @@ class HentaiBalo : MainAPI() {
         val document = app.get(watchUrl).document
         val servers = document.select("li[data-watch]")
         var found = false
+        var index = 0
 
-        // رتّب السيرفرات: MEGA أولاً ثم الباقي
-        val sorted = servers.sortedByDescending { li ->
-            val u = li.attr("data-watch")
-            when {
-                u.contains("mega.nz") -> 3
-                u.contains("savemavo") -> 2
-                u.contains("streamtape") || u.contains("voe.sx") -> 1
-                else -> 0
-            }
-        }
-
-        for (li in sorted) {
+        for (li in servers) {
             val raw = li.attr("data-watch").trim()
             if (raw.isBlank()) continue
             val embedUrl = cleanEmbedUrl(raw)
+            val name = serverLabel(embedUrl, index)
+            index++
 
-            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
+            // جرب المستخرج أولاً
+            val ok = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
+            if (ok) {
+                found = true
+            } else {
+                // أظهر السيرفر حتى لو فشل المستخرج
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = name,
+                        url = embedUrl
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
                 found = true
             }
         }
