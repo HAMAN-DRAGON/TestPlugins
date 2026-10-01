@@ -26,7 +26,7 @@ class HentaiXPlanet : MainAPI() {
         else request.data.trimEnd('/') + "/page/$page/"
 
         val document = app.get(url).document
-        val home = document.select("div.thumb-block").mapNotNull { it.toSearchResult() }
+        val home = document.select("article.thumb-block, .thumb-block").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
         return newHomePageResponse(request.name, home)
     }
@@ -38,7 +38,7 @@ class HentaiXPlanet : MainAPI() {
 
         var title = a.attr("title").trim()
         if (title.isBlank()) {
-            title = this.selectFirst(".title, h2, h3, .entry-title")?.text()?.trim().orEmpty()
+            title = this.selectFirst(".cat-title, .entry-header, .title, h2, h3")?.text()?.trim().orEmpty()
         }
         if (title.isBlank()) {
             title = a.text().trim()
@@ -61,7 +61,7 @@ class HentaiXPlanet : MainAPI() {
 
     override suspend fun search(query: String): List<SearchResponse> {
         val document = app.get("$mainUrl/?s=$query").document
-        return document.select("div.thumb-block").mapNotNull { it.toSearchResult() }
+        return document.select("article.thumb-block, .thumb-block").mapNotNull { it.toSearchResult() }
             .distinctBy { it.url }
     }
 
@@ -80,7 +80,7 @@ class HentaiXPlanet : MainAPI() {
             ?.text()?.trim()
 
         val episodes = if (url.contains("/category/")) {
-            document.select("div.thumb-block").mapNotNull { el ->
+            document.select("article.thumb-block, .thumb-block").mapNotNull { el ->
                 val a = el.selectFirst("a[href]") ?: return@mapNotNull null
                 val href = fixUrl(a.attr("href"))
                 if (href.isBlank() || href.contains("/category/")) return@mapNotNull null
