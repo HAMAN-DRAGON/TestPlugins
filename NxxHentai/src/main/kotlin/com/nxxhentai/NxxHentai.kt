@@ -24,15 +24,12 @@ class NxxHentai : MainAPI() {
     override suspend fun getMainPage(page: Int, request: MainPageRequest): HomePageResponse {
         val url = if (page <= 1) request.data
         else request.data.trimEnd('/') + "/page/$page/"
-
         val document = app.get(url).document
         val home = document.select("article, .anime-card, .post, .item, .card, h3 a[href*=/anime/]")
             .mapNotNull { el ->
-                if (el.tagName() == "a") el.toSearchFromAnchor()
-                else el.toSearchResult()
+                if (el.tagName() == "a") el.toSearchFromAnchor() else el.toSearchResult()
             }
             .distinctBy { it.url }
-
         return newHomePageResponse(request.name, home)
     }
 
@@ -48,14 +45,10 @@ class NxxHentai : MainAPI() {
         val a = this.selectFirst("a[href*=/anime/]") ?: return null
         val href = fixUrl(a.attr("href"))
         if (href.isBlank() || href.contains("/page/")) return null
-
         var title = a.attr("title").trim()
         if (title.isBlank()) title = a.text().trim()
-        if (title.isBlank()) {
-            title = this.selectFirst("h2, h3, .title, .entry-title")?.text()?.trim().orEmpty()
-        }
+        if (title.isBlank()) title = this.selectFirst("h2, h3, .title, .entry-title")?.text()?.trim().orEmpty()
         if (title.isBlank()) return null
-
         val img = this.selectFirst("img")
         var poster: String? = null
         if (img != null) {
@@ -64,7 +57,6 @@ class NxxHentai : MainAPI() {
             if (poster.isBlank()) poster = img.attr("abs:data-lazy-src")
             if (poster.isBlank()) poster = null
         }
-
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
@@ -74,38 +66,28 @@ class NxxHentai : MainAPI() {
         val document = app.get("$mainUrl/?s=$query").document
         return document.select("article, .anime-card, .post, .item, h3 a[href*=/anime/]")
             .mapNotNull { el ->
-                if (el.tagName() == "a") el.toSearchFromAnchor()
-                else el.toSearchResult()
+                if (el.tagName() == "a") el.toSearchFromAnchor() else el.toSearchResult()
             }
             .distinctBy { it.url }
     }
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-
         var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
-        if (title.isBlank()) {
-            title = document.title().substringBefore("-").substringBefore("|").trim()
-        }
-
-        val poster = document.selectFirst("img.wp-post-image, .poster img, .thumb img, article img")
-            ?.attr("abs:src")
-
-        val description = document.selectFirst(".entry-content p, .description p, .synopsis, article p")
-            ?.text()?.trim()
+        if (title.isBlank()) title = document.title().substringBefore("-").substringBefore("|").trim()
+        val poster = document.selectFirst("img.wp-post-image, .poster img, .thumb img, article img")?.attr("abs:src")
+        val description = document.selectFirst(".entry-content p, .description p, .synopsis, article p")?.text()?.trim()
 
         val episodes = document.select("a[href*=/episodes/]").mapNotNull { a ->
             val href = fixUrl(a.attr("href"))
             val text = a.text().trim().ifBlank { a.attr("title").trim() }
             if (href.isBlank()) return@mapNotNull null
-
             val epNum = Regex("""الحلقة\s*0*(\d+)""", RegexOption.IGNORE_CASE).find(text)
                 ?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""الحلقة\s*0*(\d+)""", RegexOption.IGNORE_CASE).find(href)
                     ?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""0*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
-
             newEpisode(href) {
                 this.name = "الحلقة $epNum"
                 this.episode = epNum
@@ -134,16 +116,14 @@ class NxxHentai : MainAPI() {
                 return finalUrl
             }
             val doc = res.document
-            val iframe = doc.selectFirst("iframe[src], iframe[data-src]")
-            if (iframe != null) {
-                var src = iframe.attr("abs:src")
-                if (src.isBlank()) src = iframe.attr("abs:data-src")
+            doc.selectFirst("iframe[src], iframe[data-src]")?.let {
+                var src = it.attr("abs:src")
+                if (src.isBlank()) src = it.attr("abs:data-src")
                 if (src.isNotBlank()) return src
             }
-            val a = doc.selectFirst("a[href*=http]")
-            if (a != null) {
-                val href = a.attr("abs:href")
-                if (href.isNotBlank() && !href.contains("nxxhentai.net/links/")) return href
+            doc.selectFirst("source[src], video[src]")?.let {
+                val src = it.attr("abs:src")
+                if (src.isNotBlank()) return src
             }
             null
         } catch (_: Exception) {
@@ -160,73 +140,76 @@ class NxxHentai : MainAPI() {
         val document = app.get(data).document
         var found = false
         var index = 1
-        val candidates = linkedSetOf<Pair<String, String>>() // name to url
+        val candidates = linkedSetOf<Pair<String, String>>()
 
-        // 1) روابط التحميل /links/
+        // روابط /links/
         document.select("a[href*=/links/]").forEach { a ->
             val href = fixUrl(a.attr("href"))
-            val label = a.text().trim().ifBlank { "Download $index" }
+            val label = a.text().trim().ifBlank { "Link $index" }
             if (href.isNotBlank()) {
                 val resolved = resolveLink(href)
-                if (!resolved.isNullOrBlank()) {
-                    candidates.add(label to resolved)
-                } else {
-                    candidates.add(label to href)
-                }
+                candidates.add(label to (resolved ?: href))
             }
         }
 
-        // 2) أزرار/عناصر السيرفرات
+        // خصائص data
         document.select(
             "[data-src], [data-url], [data-embed], [data-link], [data-video], [data-player], " +
-                ".server, .servers li, .player-server, button[data-id], a[data-embed]"
+                ".server, .servers li, button, a[data-embed]"
         ).forEach { el ->
-            val label = el.text().trim().take(30).ifBlank { "Server $index" }
+            val label = el.text().trim().take(40).ifBlank { "Server $index" }
             listOf("data-src", "data-url", "data-embed", "data-link", "data-video", "data-player", "href").forEach { attr ->
                 var v = el.attr(attr).trim()
                 if (v.startsWith("//")) v = "https:$v"
-                if (v.startsWith("http")) {
-                    candidates.add(label to v)
-                }
+                if (v.startsWith("http")) candidates.add(label to v)
             }
         }
 
-        // 3) iframes
-        document.select("iframe[src], iframe[data-src]").forEach { iframe ->
-            var u = iframe.attr("abs:src").trim()
-            if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
-            if (u.isNotBlank()) candidates.add("Iframe $index" to u)
+        // iframe + video + source
+        document.select("iframe[src], iframe[data-src], video[src], source[src]").forEach { el ->
+            var u = el.attr("abs:src").trim()
+            if (u.isBlank()) u = el.attr("abs:data-src").trim()
+            if (u.isNotBlank()) candidates.add("Player $index" to u)
         }
 
-        // 4) من مصدر الصفحة
+        // كل الروابط المحتملة من HTML (خصوصًا googleapis و dood و mp4)
         val html = document.html()
-        Regex("""https?://[^\s"'<>]+""").findAll(html).forEach { m ->
-            val u = m.value
-            if (
-                u.contains("embed", true) ||
-                u.contains("/e/") ||
-                u.contains("streamhg", true) ||
-                u.contains("streamtape") ||
-                u.contains("voe.sx") ||
-                u.contains("mega.nz") ||
-                u.contains("upn.") ||
-                u.contains("player", true)
-            ) {
-                if (!u.contains("oembed") && !u.contains("wp-json") && !u.contains("cloudflare")) {
-                    candidates.add("Embed $index" to u)
-                }
+        Regex("""https?://[^\s"'<>\\]+""").findAll(html).forEach { m ->
+            val u = m.value.trimEnd('\\', '"', '\'')
+            when {
+                u.contains("storage.googleapis.com") -> candidates.add("GoogleMP4" to u)
+                u.contains(".mp4") -> candidates.add("MP4" to u)
+                u.contains("dood") -> candidates.add("DoodStream" to u)
+                u.contains("embed") || u.contains("/e/") -> candidates.add("Embed" to u)
+                u.contains("streamtape") || u.contains("voe.sx") -> candidates.add("Host" to u)
             }
         }
 
         for ((label, embedUrl) in candidates) {
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
             if (embedUrl.contains("nxxhentai.net/links/")) continue
+            if (embedUrl.contains("doodstream.com") && !embedUrl.contains("/e/") && !embedUrl.contains("/d/")) continue
 
             val name = label.ifBlank { "Server $index" }
             index++
 
-            val ok = loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)
-            if (ok) {
+            // رابط مباشر mp4
+            if (embedUrl.contains(".mp4") || embedUrl.contains("storage.googleapis.com")) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = name,
+                        url = embedUrl
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                found = true
+                continue
+            }
+
+            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
             } else {
                 callback.invoke(
