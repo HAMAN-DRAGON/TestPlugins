@@ -128,11 +128,53 @@ class NxxHentai : MainAPI() {
         }
     }
 
-    private suspend fun resolveLink(url: String): String? {
+    private fun normalizeEmbed(url: String): String {
+        var u = url.trim()
+        // Dood: /d/ → /e/
+        if (u.contains("dood", ignoreCase = true) || u.contains("playmogo", ignoreCase = true)) {
+            u = u.replace("/d/", "/e/")
+        }
+        return u
+    }
+
+    private fun hostName(url: String): String {
+        val u = url.lowercase()
+        return when {
+            u.contains("dood") -> "DoodStream"
+            u.contains("playmogo") -> "DoodStream" // نفس عائلة Dood في CloudStream
+            u.contains("streamtape") -> "Streamtape"
+            u.contains("voe.sx") -> "VOE"
+            u.contains("streamhg") || u.contains("sssrr") -> "StreamHG"
+            u.contains("upn.") -> "UPN"
+            u.contains("mega.nz") -> "MEGA"
+            u.contains("player.nxxhentai") -> "NxxPlayer"
+            else -> "Server"
+        }
+    }
+
+    private fun priority(url: String): Int {
+        val u = url.lowercase()
+        return when {
+            u.contains("dood") -> 10
+            u.contains("playmogo") -> 10
+            u.contains("streamtape") -> 9
+            u.contains("voe.sx") -> 8
+            u.contains("streamhg") || u.contains("sssrr") -> 7
+            u.contains("upn.") -> 5
+            u.contains("player.nxxhentai") -> 2
+            u.contains("mega.nz") -> 0
+            else -> 3
+        }
+    }
+
+    private suspend fun resolveRedirect(url: String): String? {
         return try {
-            val res = app.get(url, allowRedirects = true)
+            val res = app.get(url, allowRedirects = true, referer = mainUrl)
             val finalUrl = res.url
-            if (finalUrl != url && finalUrl.startsWith("http") && !finalUrl.contains("nxxhentai.net/links/")) {
+            if (finalUrl.startsWith("http") &&
+                !finalUrl.contains("nxxhentai.net/links/") &&
+                !finalUrl.contains("nxxhentai.net/episodes/")
+            ) {
                 return finalUrl
             }
             val doc = res.document
@@ -147,6 +189,13 @@ class NxxHentai : MainAPI() {
                 val src = source.attr("abs:src")
                 if (src.isNotBlank()) return src
             }
+            // ابحث عن روابط dood / playmogo داخل الصفحة
+            val html = doc.html()
+            val found = Regex(
+                """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx|streamhg[\w.-]*)/[^\s"'<>]+""",
+                RegexOption.IGNORE_CASE
+            ).find(html)?.value
+            if (found != null) return found
             null
         } catch (e: Exception) {
             null
@@ -161,96 +210,79 @@ class NxxHentai : MainAPI() {
     ): Boolean {
         val document = app.get(data).document
         var found = false
-        var index = 1
         val candidates = linkedSetOf<String>()
 
+        // 1) روابط التحميل /links/ — أهم مصدر لـ Dood/PlayMogo
         document.select("a[href*=/links/]").forEach { a ->
             val href = fixUrl(a.attr("href"))
-            if (href.isNotBlank()) {
-                val resolved = resolveLink(href)
-                if (resolved != null && resolved.isNotBlank()) {
-                    candidates.add(resolved)
-                } else {
-                    candidates.add(href)
-                }
+            if (href.isBlank()) return@forEach
+            val resolved = resolveRedirect(href)
+            if (!resolved.isNullOrBlank()) {
+                candidates.add(normalizeEmbed(resolved))
             }
         }
 
-        document.select(
-            "[data-src], [data-url], [data-embed], [data-link], [data-video], [data-player]"
-        ).forEach { el ->
-            listOf("data-src", "data-url", "data-embed", "data-link", "data-video", "data-player").forEach { attr ->
+        // 2) iframes ظاهرة
+        document.select("iframe[src], iframe[data-src]").forEach { iframe ->
+            var u = iframe.attr("abs:src").trim()
+            if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
+            if (u.isNotBlank()) candidates.add(normalizeEmbed(u))
+        }
+
+        // 3) خصائص data
+        document.select("[data-embed], [data-watch], [data-url], [data-link], [data-src]").forEach { el ->
+            listOf("data-embed", "data-watch", "data-url", "data-link", "data-src").forEach { attr ->
                 var v = el.attr(attr).trim()
                 if (v.startsWith("//")) v = "https:$v"
-                if (v.startsWith("http")) candidates.add(v)
-            }
-        }
-
-        document.select("iframe[src], iframe[data-src], video[src], source[src]").forEach { el ->
-            var u = el.attr("abs:src").trim()
-            if (u.isBlank()) u = el.attr("abs:data-src").trim()
-            if (u.isNotBlank()) candidates.add(u)
-        }
-
-        val html = document.html()
-        Regex("""https?://[^\s"'<>\\]+""").findAll(html).forEach { m ->
-            var u = m.value
-            while (u.endsWith("\\") || u.endsWith("\"") || u.endsWith("'")) {
-                u = u.dropLast(1)
-            }
-            if (u.contains("storage.googleapis.com") ||
-                u.contains(".mp4") ||
-                u.contains("dood") ||
-                u.contains("/e/") ||
-                u.contains("embed") ||
-                u.contains("streamtape") ||
-                u.contains("voe.sx")
-            ) {
-                if (!u.contains("oembed") && !u.contains("wp-json") && !u.contains("cloudflare")) {
-                    candidates.add(u)
+                if (v.startsWith("http") && !v.contains("wp-content/uploads")) {
+                    candidates.add(normalizeEmbed(v))
                 }
             }
         }
 
-        for (embedUrl in candidates) {
+        // 4) بحث في HTML عن مضيفات معروفة
+        val html = document.html()
+        Regex(
+            """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx|streamhg[\w.-]*|[\w.-]*sssrr\.org|player\.nxxhentai\.net)/[^\s"'<>]+""",
+            RegexOption.IGNORE_CASE
+        ).findAll(html).forEach { m ->
+            candidates.add(normalizeEmbed(m.value))
+        }
+
+        val sorted = candidates.sortedByDescending { priority(it) }
+
+        for (embedUrl in sorted) {
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
             if (embedUrl.contains("nxxhentai.net/links/")) continue
-            if (embedUrl.contains("doodstream.com") && !embedUrl.contains("/e/") && !embedUrl.contains("/d/")) continue
+            if (embedUrl.contains("mega.nz")) continue
+            // تجاهل الصفحة الرئيسية لـ dood بدون /e/ أو /d/
+            if (embedUrl.matches(Regex("""https?://[^/]*dood[^/]*/?""", RegexOption.IGNORE_CASE))) continue
 
-            val name = "Server $index"
-            index++
-
-            if (embedUrl.contains(".mp4") || embedUrl.contains("storage.googleapis.com")) {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = name,
-                        url = embedUrl
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                found = true
-                continue
-            }
+            val name = hostName(embedUrl)
 
             if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
             } else {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = name,
-                        url = embedUrl
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                found = true
+                // لا تمرّر صفحات غير فيديو إلا للمضيفات المعروفة
+                if (embedUrl.contains("dood", true) ||
+                    embedUrl.contains("playmogo", true) ||
+                    embedUrl.contains("streamtape", true) ||
+                    embedUrl.contains("voe.sx", true) ||
+                    embedUrl.contains("/e/")
+                ) {
+                    callback.invoke(
+                        newExtractorLink(
+                            source = this.name,
+                            name = name,
+                            url = embedUrl
+                        ) {
+                            this.referer = mainUrl
+                            this.quality = Qualities.Unknown.value
+                        }
+                    )
+                    found = true
+                }
             }
         }
         return found
     }
-}
