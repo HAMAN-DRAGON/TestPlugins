@@ -13,7 +13,7 @@ class HentaiXPlanet : MainAPI() {
     override val hasMainPage = true
     override var lang = "ar"
     override val hasDownloadSupport = true
-    override val supportedTypes = setOf(TvType.NSFW, TvType.Anime)
+    override val supportedTypes = setOf(TvType.NSFW)
 
     override val mainPage = mainPageOf(
         "$mainUrl/%d9%82%d8%a7%d8%a6%d9%85%d8%a9-%d8%a7%d9%84%d9%87%d9%86%d8%aa%d8%a7%d9%8a/" to "قائمة الهنتاي",
@@ -47,7 +47,7 @@ class HentaiXPlanet : MainAPI() {
             if (poster.isBlank()) poster = null
         }
 
-        return newAnimeSearchResponse(title, href, TvType.NSFW) {
+        return newMovieSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
     }
@@ -58,13 +58,6 @@ class HentaiXPlanet : MainAPI() {
             .distinctBy { it.url }
     }
 
-    private fun extractEpNum(text: String, href: String): Int? {
-        return Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?: Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?: Regex("""حلقة\s*(\d+)""").find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
-            ?: Regex("""الحلقة[_-](\d+)""").find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
-    }
-
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
 
@@ -73,72 +66,20 @@ class HentaiXPlanet : MainAPI() {
             title = document.title().substringBefore("|").substringBefore("–").trim()
         }
 
-        val poster = document.selectFirst("img.wp-post-image, .poster img, article img")
-            ?.attr("abs:src")
-
-        val description = document.selectFirst(".entry-content p, article p")
-            ?.text()?.trim()
-
-        // رابط "جميع حلقات ..."
-        val categoryLink = document.select("a[href*=/category/]").firstOrNull { a ->
-            val t = a.text()
-            t.contains("جميع حلقات") || t.contains("كل الحلقات")
-        }?.attr("abs:href")
-            ?: document.select("a[href*=/category/]").firstOrNull()?.attr("abs:href")
-
-        // كلمة مفتاحية من العنوان لتصفية الحلقات غير المرتبطة
-        val key = Regex("""[A-Za-z][A-Za-z0-9\-]{2,}""").findAll(title)
-            .map { it.value.lowercase() }
-            .filter { it !in listOf("the", "and", "مترجم", "عربي", "هنتاي", "انمي") }
-            .toList()
-            .take(3)
-
-        if (!categoryLink.isNullOrBlank()) {
-            try {
-                val catDoc = app.get(categoryLink).document
-                val episodes = catDoc.select("article.thumb-block a, .thumb-block a").mapNotNull { a ->
-                    val href = fixUrl(a.attr("href"))
-                    var text = a.attr("title").trim()
-                    if (text.isBlank()) text = a.text().trim()
-                    if (href.isBlank()) return@mapNotNull null
-
-                    // استبعاد حلقات مسلسلات أخرى مختلطة في التصنيف
-                    if (key.isNotEmpty()) {
-                        val blob = (text + " " + href).lowercase()
-                        if (key.none { blob.contains(it) }) return@mapNotNull null
-                    }
-
-                    val epNum = extractEpNum(text, href) ?: return@mapNotNull null
-                    newEpisode(href) {
-                        this.name = "الحلقة $epNum"
-                        this.episode = epNum
-                    }
-                }.distinctBy { it.episode }.sortedBy { it.episode }
-
-                if (episodes.isNotEmpty()) {
-                    return newAnimeLoadResponse(title, url, TvType.NSFW) {
-                        this.posterUrl = poster
-                        this.plot = description
-                        addEpisodes(DubStatus.Subbed, episodes)
-                    }
-                }
-            } catch (_: Exception) {
+        val poster = document.selectFirst("img.wp-post-image, .poster img, article img, meta[property=og:image]")
+            ?.let {
+                if (it.tagName() == "meta") it.attr("content") else it.attr("abs:src")
             }
-        }
 
-        val epNum = extractEpNum(title, url) ?: 1
-        return newAnimeLoadResponse(title, url, TvType.NSFW) {
+        val description = document.selectFirst(".entry-content p, article p, meta[property=og:description]")
+            ?.let {
+                if (it.tagName() == "meta") it.attr("content") else it.text().trim()
+            }
+
+        // كل حلقة = فيديو واحد (dataUrl = رابط الصفحة)
+        return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
-            addEpisodes(
-                DubStatus.Subbed,
-                listOf(
-                    newEpisode(url) {
-                        this.name = "الحلقة $epNum"
-                        this.episode = epNum
-                    }
-                )
-            )
         }
     }
 
@@ -153,7 +94,6 @@ class HentaiXPlanet : MainAPI() {
             u.contains("mixdrop") -> "MixDrop"
             u.contains("savemavo") -> "SaveMavo"
             u.contains("hglamioz") -> "Hglamioz"
-            u.contains("mega.nz") -> "MEGA"
             else -> "Server"
         }
     }
@@ -169,17 +109,8 @@ class HentaiXPlanet : MainAPI() {
             u.contains("upn.") -> 5
             u.contains("savemavo") -> 2
             u.contains("hglamioz") -> 1
-            u.contains("mega.nz") -> 0
             else -> 3
         }
-    }
-
-    private fun normalizeEmbed(url: String): String {
-        var u = url.trim()
-        if (u.contains("playmogo", true) || u.contains("dood", true) || u.contains("myvidplay", true)) {
-            u = u.replace("/d/", "/e/")
-        }
-        return u
     }
 
     override suspend fun loadLinks(
@@ -192,55 +123,68 @@ class HentaiXPlanet : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
-        // كل مشغّلات السيرفرات (حتى المخفية display:none)
-        document.select(
-            ".server-player-item iframe, .video-multi-players-container iframe, " +
-                ".responsive-player iframe, iframe[src], iframe[data-src]"
-        ).forEach { iframe ->
+        // كل الـ iframes بما فيها المخفية
+        document.select("iframe").forEach { iframe ->
             var u = iframe.attr("abs:src").trim()
+            if (u.isBlank()) u = iframe.attr("src").trim()
             if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
-            if (u.isNotBlank()) candidates.add(normalizeEmbed(u))
+            if (u.startsWith("//")) u = "https:$u"
+            if (u.startsWith("http")) candidates.add(u)
         }
 
-        document.select("[data-embed], [data-watch], [data-url]").forEach { el ->
-            listOf("data-embed", "data-watch", "data-url").forEach { attr ->
-                var v = el.attr(attr).trim()
-                if (v.startsWith("//")) v = "https:$v"
-                if (v.startsWith("http")) candidates.add(normalizeEmbed(v))
-            }
-        }
-
+        // من HTML مباشرة
         val html = document.html()
-        Regex(
-            """https?://(?:playmogo\.com|[\w.-]*dood[\w.-]*|myvidplay\.com|rubyvidhub\.com|streamtape\.com|voe\.sx|mixdrop[\w.-]*|[\w.-]*upn\.[\w.]+|savemavo\.com|sv\d+\.savemavo\.com|hglamioz\.com)/[^\s"'<>]+""",
-            RegexOption.IGNORE_CASE
-        ).findAll(html).forEach { m ->
-            candidates.add(normalizeEmbed(m.value))
+        Regex("""https?://[^\s"'<>]+""").findAll(html).forEach { m ->
+            val u = m.value
+            val low = u.lowercase()
+            if (low.contains("playmogo") ||
+                low.contains("dood") ||
+                low.contains("myvidplay") ||
+                low.contains("rubyvid") ||
+                low.contains("streamtape") ||
+                low.contains("voe.sx") ||
+                low.contains("mixdrop") ||
+                low.contains("upn.") ||
+                low.contains("savemavo") ||
+                low.contains("hglamioz") ||
+                low.contains("/e/") ||
+                low.contains("embed")
+            ) {
+                if (!low.contains("oembed") &&
+                    !low.contains("wp-json") &&
+                    !low.contains("facebook") &&
+                    !low.contains("youtube")
+                ) {
+                    candidates.add(u)
+                }
+            }
         }
 
         val sorted = candidates.sortedByDescending { priority(it) }
 
         for (embedUrl in sorted) {
-            if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
             if (embedUrl.contains("mega.nz")) continue
-            if (embedUrl.contains("oembed") || embedUrl.contains("wp-json")) continue
 
-            val name = hostName(embedUrl)
+            var finalUrl = embedUrl
+            if (finalUrl.contains("playmogo") || finalUrl.contains("dood") || finalUrl.contains("myvidplay")) {
+                finalUrl = finalUrl.replace("/d/", "/e/")
+            }
+
+            val name = hostName(finalUrl)
 
             try {
-                if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
+                if (loadExtractor(finalUrl, mainUrl, subtitleCallback, callback)) {
                     found = true
                     continue
                 }
             } catch (_: Exception) {
             }
 
-            // إظهار المصدر حتى لو فشل المستخرج (أفضل من "لا روابط")
             callback.invoke(
                 newExtractorLink(
                     source = this.name,
                     name = name,
-                    url = embedUrl
+                    url = finalUrl
                 ) {
                     this.referer = mainUrl
                     this.quality = Qualities.Unknown.value
