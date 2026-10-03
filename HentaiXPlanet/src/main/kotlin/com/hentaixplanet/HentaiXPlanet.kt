@@ -66,17 +66,17 @@ class HentaiXPlanet : MainAPI() {
             title = document.title().substringBefore("|").substringBefore("–").trim()
         }
 
-        val poster = document.selectFirst("img.wp-post-image, .poster img, article img, meta[property=og:image]")
-            ?.let {
-                if (it.tagName() == "meta") it.attr("content") else it.attr("abs:src")
-            }
+        var poster: String? = document.selectFirst("img.wp-post-image, .poster img, article img")
+            ?.attr("abs:src")
+        if (poster.isNullOrBlank()) {
+            poster = document.selectFirst("meta[property=og:image]")?.attr("content")
+        }
 
-        val description = document.selectFirst(".entry-content p, article p, meta[property=og:description]")
-            ?.let {
-                if (it.tagName() == "meta") it.attr("content") else it.text().trim()
-            }
+        var description: String? = document.selectFirst(".entry-content p, article p")?.text()?.trim()
+        if (description.isNullOrBlank()) {
+            description = document.selectFirst("meta[property=og:description]")?.attr("content")
+        }
 
-        // كل حلقة = فيديو واحد (dataUrl = رابط الصفحة)
         return newMovieLoadResponse(title, url, TvType.NSFW, url) {
             this.posterUrl = poster
             this.plot = description
@@ -123,7 +123,6 @@ class HentaiXPlanet : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
-        // كل الـ iframes بما فيها المخفية
         document.select("iframe").forEach { iframe ->
             var u = iframe.attr("abs:src").trim()
             if (u.isBlank()) u = iframe.attr("src").trim()
@@ -132,7 +131,6 @@ class HentaiXPlanet : MainAPI() {
             if (u.startsWith("http")) candidates.add(u)
         }
 
-        // من HTML مباشرة
         val html = document.html()
         Regex("""https?://[^\s"'<>]+""").findAll(html).forEach { m ->
             val u = m.value
