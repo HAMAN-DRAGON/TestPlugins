@@ -33,10 +33,12 @@ class HentaiXPlanet : MainAPI() {
         val a = this.selectFirst("a") ?: return null
         val href = fixUrl(a.attr("href"))
         if (href.isBlank()) return null
+
         var title = a.attr("title").trim()
         if (title.isBlank()) title = this.selectFirst("h2, h3, .title")?.text()?.trim().orEmpty()
         if (title.isBlank()) title = a.text().trim()
         if (title.isBlank()) return null
+
         val img = this.selectFirst("img")
         var poster: String? = null
         if (img != null) {
@@ -44,6 +46,7 @@ class HentaiXPlanet : MainAPI() {
             if (poster.isBlank()) poster = img.attr("abs:data-src")
             if (poster.isBlank()) poster = null
         }
+
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
@@ -55,90 +58,128 @@ class HentaiXPlanet : MainAPI() {
             .distinctBy { it.url }
     }
 
+    private fun extractEpNum(text: String, href: String): Int? {
+        return Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: Regex("""حلقة\s*(\d+)""").find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
+            ?: Regex("""الحلقة[_-](\d+)""").find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
+    }
+
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
+
         var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
-        if (title.isBlank()) title = document.title().substringBefore("|").substringBefore("–").trim()
+        if (title.isBlank()) {
+            title = document.title().substringBefore("|").substringBefore("–").trim()
+        }
 
-        val poster = document.selectFirst("img.wp-post-image, .poster img, article img")?.attr("abs:src")
-        val description = document.selectFirst(".entry-content p, article p")?.text()?.trim()
+        val poster = document.selectFirst("img.wp-post-image, .poster img, article img")
+            ?.attr("abs:src")
 
-        val seriesLink = document.select("a").firstOrNull { a ->
+        val description = document.selectFirst(".entry-content p, article p")
+            ?.text()?.trim()
+
+        // رابط "جميع حلقات ..."
+        val categoryLink = document.select("a[href*=/category/]").firstOrNull { a ->
             val t = a.text()
             t.contains("جميع حلقات") || t.contains("كل الحلقات")
         }?.attr("abs:href")
+            ?: document.select("a[href*=/category/]").firstOrNull()?.attr("abs:href")
 
-        val episodeDoc = if (!seriesLink.isNullOrBlank()) {
-            try { app.get(seriesLink).document } catch (e: Exception) { document }
-        } else document
+        // كلمة مفتاحية من العنوان لتصفية الحلقات غير المرتبطة
+        val key = Regex("""[A-Za-z][A-Za-z0-9\-]{2,}""").findAll(title)
+            .map { it.value.lowercase() }
+            .filter { it !in listOf("the", "and", "مترجم", "عربي", "هنتاي", "انمي") }
+            .toList()
+            .take(3)
 
-        val episodes = episodeDoc.select("article.thumb-block a, .thumb-block a").mapNotNull { a ->
-            val href = fixUrl(a.attr("href"))
-            var text = a.text().trim()
-            if (text.isBlank()) text = a.attr("title").trim()
-            if (href.isBlank()) return@mapNotNull null
-            val epNum = Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                ?: Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                ?: Regex("""حلقة\s*(\d+)""").find(href)?.groupValues?.getOrNull(1)?.toIntOrNull()
-                ?: return@mapNotNull null
-            newEpisode(href) {
-                this.name = "الحلقة $epNum"
-                this.episode = epNum
+        if (!categoryLink.isNullOrBlank()) {
+            try {
+                val catDoc = app.get(categoryLink).document
+                val episodes = catDoc.select("article.thumb-block a, .thumb-block a").mapNotNull { a ->
+                    val href = fixUrl(a.attr("href"))
+                    var text = a.attr("title").trim()
+                    if (text.isBlank()) text = a.text().trim()
+                    if (href.isBlank()) return@mapNotNull null
+
+                    // استبعاد حلقات مسلسلات أخرى مختلطة في التصنيف
+                    if (key.isNotEmpty()) {
+                        val blob = (text + " " + href).lowercase()
+                        if (key.none { blob.contains(it) }) return@mapNotNull null
+                    }
+
+                    val epNum = extractEpNum(text, href) ?: return@mapNotNull null
+                    newEpisode(href) {
+                        this.name = "الحلقة $epNum"
+                        this.episode = epNum
+                    }
+                }.distinctBy { it.episode }.sortedBy { it.episode }
+
+                if (episodes.isNotEmpty()) {
+                    return newAnimeLoadResponse(title, url, TvType.NSFW) {
+                        this.posterUrl = poster
+                        this.plot = description
+                        addEpisodes(DubStatus.Subbed, episodes)
+                    }
+                }
+            } catch (_: Exception) {
             }
-        }.distinctBy { it.episode }.sortedBy { it.episode }
+        }
 
-        val finalEpisodes = if (episodes.isNotEmpty()) episodes else listOf(
-            newEpisode(url) {
-                this.name = "الحلقة 1"
-                this.episode = 1
-            }
-        )
-
+        val epNum = extractEpNum(title, url) ?: 1
         return newAnimeLoadResponse(title, url, TvType.NSFW) {
             this.posterUrl = poster
             this.plot = description
-            addEpisodes(DubStatus.Subbed, finalEpisodes)
+            addEpisodes(
+                DubStatus.Subbed,
+                listOf(
+                    newEpisode(url) {
+                        this.name = "الحلقة $epNum"
+                        this.episode = epNum
+                    }
+                )
+            )
         }
     }
 
     private fun hostName(url: String): String {
+        val u = url.lowercase()
         return when {
-            url.contains("dood") -> "DoodStream"
-            url.contains("streamtape") -> "Streamtape"
-            url.contains("voe.sx") -> "VOE"
-            url.contains("rubyvid") -> "RubyVid"
-            url.contains("playmogo") -> "PlayMogo"
-            url.contains("upn.") -> "UPN"
-            url.contains("savemavo") -> "SaveMavo"
-            url.contains("hglamioz") -> "Hglamioz"
-            url.contains("mega.nz") -> "MEGA"
+            u.contains("playmogo") || u.contains("dood") || u.contains("myvidplay") -> "DoodStream"
+            u.contains("rubyvid") -> "RubyVid"
+            u.contains("upn.") -> "UPN"
+            u.contains("streamtape") -> "Streamtape"
+            u.contains("voe.sx") -> "VOE"
+            u.contains("mixdrop") -> "MixDrop"
+            u.contains("savemavo") -> "SaveMavo"
+            u.contains("hglamioz") -> "Hglamioz"
+            u.contains("mega.nz") -> "MEGA"
             else -> "Server"
         }
     }
 
     private fun priority(url: String): Int {
+        val u = url.lowercase()
         return when {
-            url.contains("dood") -> 10
-            url.contains("streamtape") -> 9
-            url.contains("voe.sx") -> 8
-            url.contains("rubyvid") -> 7
-            url.contains("playmogo") -> 6
-            url.contains("upn.") -> 5
-            url.contains("savemavo") -> 3
-            url.contains("hglamioz") -> 2
-            url.contains("mega.nz") -> 1
-            else -> 0
+            u.contains("playmogo") || u.contains("dood") || u.contains("myvidplay") -> 10
+            u.contains("rubyvid") -> 9
+            u.contains("streamtape") -> 8
+            u.contains("voe.sx") -> 7
+            u.contains("mixdrop") -> 6
+            u.contains("upn.") -> 5
+            u.contains("savemavo") -> 2
+            u.contains("hglamioz") -> 1
+            u.contains("mega.nz") -> 0
+            else -> 3
         }
     }
 
-    private fun isProbablyVideo(url: String): Boolean {
-        val u = url.lowercase()
-        if (u.endsWith(".jpg") || u.endsWith(".jpeg") || u.endsWith(".png") ||
-            u.endsWith(".webp") || u.endsWith(".gif") || u.endsWith(".svg")
-        ) return false
-        if (u.contains("wp-content/uploads")) return false
-        if (u.contains("youtube") || u.contains("facebook")) return false
-        return true
+    private fun normalizeEmbed(url: String): String {
+        var u = url.trim()
+        if (u.contains("playmogo", true) || u.contains("dood", true) || u.contains("myvidplay", true)) {
+            u = u.replace("/d/", "/e/")
+        }
+        return u
     }
 
     override suspend fun loadLinks(
@@ -151,45 +192,61 @@ class HentaiXPlanet : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
-        // iframes فقط — لا تلتقط صور data-src
-        document.select("iframe[src], iframe[data-src]").forEach { iframe ->
+        // كل مشغّلات السيرفرات (حتى المخفية display:none)
+        document.select(
+            ".server-player-item iframe, .video-multi-players-container iframe, " +
+                ".responsive-player iframe, iframe[src], iframe[data-src]"
+        ).forEach { iframe ->
             var u = iframe.attr("abs:src").trim()
             if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
-            if (u.isNotBlank() && isProbablyVideo(u)) candidates.add(u)
+            if (u.isNotBlank()) candidates.add(normalizeEmbed(u))
         }
 
-        // خصائص التضمين فقط
         document.select("[data-embed], [data-watch], [data-url]").forEach { el ->
             listOf("data-embed", "data-watch", "data-url").forEach { attr ->
                 var v = el.attr(attr).trim()
                 if (v.startsWith("//")) v = "https:$v"
-                if (v.startsWith("http") && isProbablyVideo(v)) candidates.add(v)
+                if (v.startsWith("http")) candidates.add(normalizeEmbed(v))
             }
+        }
+
+        val html = document.html()
+        Regex(
+            """https?://(?:playmogo\.com|[\w.-]*dood[\w.-]*|myvidplay\.com|rubyvidhub\.com|streamtape\.com|voe\.sx|mixdrop[\w.-]*|[\w.-]*upn\.[\w.]+|savemavo\.com|sv\d+\.savemavo\.com|hglamioz\.com)/[^\s"'<>]+""",
+            RegexOption.IGNORE_CASE
+        ).findAll(html).forEach { m ->
+            candidates.add(normalizeEmbed(m.value))
         }
 
         val sorted = candidates.sortedByDescending { priority(it) }
 
         for (embedUrl in sorted) {
+            if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
+            if (embedUrl.contains("mega.nz")) continue
+            if (embedUrl.contains("oembed") || embedUrl.contains("wp-json")) continue
+
             val name = hostName(embedUrl)
 
-            // تخطّي MEGA لأنه غالبًا لا يعمل في CloudStream
-            if (embedUrl.contains("mega.nz")) continue
-
-            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
-                found = true
-            } else {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = name,
-                        url = embedUrl
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
-                found = true
+            try {
+                if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
+                    found = true
+                    continue
+                }
+            } catch (_: Exception) {
             }
+
+            // إظهار المصدر حتى لو فشل المستخرج (أفضل من "لا روابط")
+            callback.invoke(
+                newExtractorLink(
+                    source = this.name,
+                    name = name,
+                    url = embedUrl
+                ) {
+                    this.referer = mainUrl
+                    this.quality = Qualities.Unknown.value
+                }
+            )
+            found = true
         }
         return found
     }
