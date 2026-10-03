@@ -46,14 +46,12 @@ class NxxHentai : MainAPI() {
         val a = this.selectFirst("a[href*=/anime/]") ?: return null
         val href = fixUrl(a.attr("href"))
         if (href.isBlank() || href.contains("/page/")) return null
-
         var title = a.attr("title").trim()
         if (title.isBlank()) title = a.text().trim()
         if (title.isBlank()) {
             title = this.selectFirst("h2, h3, .title, .entry-title")?.text()?.trim().orEmpty()
         }
         if (title.isBlank()) return null
-
         val img = this.selectFirst("img")
         var poster: String? = null
         if (img != null) {
@@ -62,7 +60,6 @@ class NxxHentai : MainAPI() {
             if (poster.isBlank()) poster = img.attr("abs:data-lazy-src")
             if (poster.isBlank()) poster = null
         }
-
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
@@ -79,15 +76,12 @@ class NxxHentai : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
-
         var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
         if (title.isBlank()) {
             title = document.title().substringBefore("-").substringBefore("|").trim()
         }
-
         val poster = document.selectFirst("img.wp-post-image, .poster img, .thumb img, article img")
             ?.attr("abs:src")
-
         val description = document.selectFirst(".entry-content p, .description p, .synopsis, article p")
             ?.text()?.trim()
 
@@ -96,14 +90,12 @@ class NxxHentai : MainAPI() {
             var text = a.text().trim()
             if (text.isBlank()) text = a.attr("title").trim()
             if (href.isBlank()) return@mapNotNull null
-
             val epNum = Regex("""الحلقة\s*0*(\d+)""", RegexOption.IGNORE_CASE).find(text)
                 ?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""الحلقة\s*0*(\d+)""", RegexOption.IGNORE_CASE).find(href)
                     ?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""0*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
-
             newEpisode(href) {
                 this.name = "الحلقة $epNum"
                 this.episode = epNum
@@ -130,7 +122,6 @@ class NxxHentai : MainAPI() {
 
     private fun normalizeEmbed(url: String): String {
         var u = url.trim()
-        // Dood: /d/ → /e/
         if (u.contains("dood", ignoreCase = true) || u.contains("playmogo", ignoreCase = true)) {
             u = u.replace("/d/", "/e/")
         }
@@ -141,12 +132,11 @@ class NxxHentai : MainAPI() {
         val u = url.lowercase()
         return when {
             u.contains("dood") -> "DoodStream"
-            u.contains("playmogo") -> "DoodStream" // نفس عائلة Dood في CloudStream
+            u.contains("playmogo") -> "DoodStream"
             u.contains("streamtape") -> "Streamtape"
             u.contains("voe.sx") -> "VOE"
             u.contains("streamhg") || u.contains("sssrr") -> "StreamHG"
             u.contains("upn.") -> "UPN"
-            u.contains("mega.nz") -> "MEGA"
             u.contains("player.nxxhentai") -> "NxxPlayer"
             else -> "Server"
         }
@@ -162,7 +152,6 @@ class NxxHentai : MainAPI() {
             u.contains("streamhg") || u.contains("sssrr") -> 7
             u.contains("upn.") -> 5
             u.contains("player.nxxhentai") -> 2
-            u.contains("mega.nz") -> 0
             else -> 3
         }
     }
@@ -184,19 +173,11 @@ class NxxHentai : MainAPI() {
                 if (src.isBlank()) src = iframe.attr("abs:data-src")
                 if (src.isNotBlank()) return src
             }
-            val source = doc.selectFirst("source[src], video[src]")
-            if (source != null) {
-                val src = source.attr("abs:src")
-                if (src.isNotBlank()) return src
-            }
-            // ابحث عن روابط dood / playmogo داخل الصفحة
             val html = doc.html()
-            val found = Regex(
-                """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx|streamhg[\w.-]*)/[^\s"'<>]+""",
+            Regex(
+                """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx)/[^\s"'<>]+""",
                 RegexOption.IGNORE_CASE
             ).find(html)?.value
-            if (found != null) return found
-            null
         } catch (e: Exception) {
             null
         }
@@ -212,7 +193,6 @@ class NxxHentai : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
-        // 1) روابط التحميل /links/ — أهم مصدر لـ Dood/PlayMogo
         document.select("a[href*=/links/]").forEach { a ->
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@forEach
@@ -222,16 +202,14 @@ class NxxHentai : MainAPI() {
             }
         }
 
-        // 2) iframes ظاهرة
         document.select("iframe[src], iframe[data-src]").forEach { iframe ->
             var u = iframe.attr("abs:src").trim()
             if (u.isBlank()) u = iframe.attr("abs:data-src").trim()
             if (u.isNotBlank()) candidates.add(normalizeEmbed(u))
         }
 
-        // 3) خصائص data
-        document.select("[data-embed], [data-watch], [data-url], [data-link], [data-src]").forEach { el ->
-            listOf("data-embed", "data-watch", "data-url", "data-link", "data-src").forEach { attr ->
+        document.select("[data-embed], [data-watch], [data-url], [data-link]").forEach { el ->
+            listOf("data-embed", "data-watch", "data-url", "data-link").forEach { attr ->
                 var v = el.attr(attr).trim()
                 if (v.startsWith("//")) v = "https:$v"
                 if (v.startsWith("http") && !v.contains("wp-content/uploads")) {
@@ -240,10 +218,9 @@ class NxxHentai : MainAPI() {
             }
         }
 
-        // 4) بحث في HTML عن مضيفات معروفة
         val html = document.html()
         Regex(
-            """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx|streamhg[\w.-]*|[\w.-]*sssrr\.org|player\.nxxhentai\.net)/[^\s"'<>]+""",
+            """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx|streamhg[\w.-]*|player\.nxxhentai\.net)/[^\s"'<>]+""",
             RegexOption.IGNORE_CASE
         ).findAll(html).forEach { m ->
             candidates.add(normalizeEmbed(m.value))
@@ -255,34 +232,32 @@ class NxxHentai : MainAPI() {
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
             if (embedUrl.contains("nxxhentai.net/links/")) continue
             if (embedUrl.contains("mega.nz")) continue
-            // تجاهل الصفحة الرئيسية لـ dood بدون /e/ أو /d/
             if (embedUrl.matches(Regex("""https?://[^/]*dood[^/]*/?""", RegexOption.IGNORE_CASE))) continue
 
             val name = hostName(embedUrl)
 
             if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
                 found = true
-            } else {
-                // لا تمرّر صفحات غير فيديو إلا للمضيفات المعروفة
-                if (embedUrl.contains("dood", true) ||
-                    embedUrl.contains("playmogo", true) ||
-                    embedUrl.contains("streamtape", true) ||
-                    embedUrl.contains("voe.sx", true) ||
-                    embedUrl.contains("/e/")
-                ) {
-                    callback.invoke(
-                        newExtractorLink(
-                            source = this.name,
-                            name = name,
-                            url = embedUrl
-                        ) {
-                            this.referer = mainUrl
-                            this.quality = Qualities.Unknown.value
-                        }
-                    )
-                    found = true
-                }
+            } else if (
+                embedUrl.contains("dood", true) ||
+                embedUrl.contains("playmogo", true) ||
+                embedUrl.contains("streamtape", true) ||
+                embedUrl.contains("voe.sx", true) ||
+                embedUrl.contains("/e/")
+            ) {
+                callback.invoke(
+                    newExtractorLink(
+                        source = this.name,
+                        name = name,
+                        url = embedUrl
+                    ) {
+                        this.referer = mainUrl
+                        this.quality = Qualities.Unknown.value
+                    }
+                )
+                found = true
             }
         }
         return found
     }
+}
