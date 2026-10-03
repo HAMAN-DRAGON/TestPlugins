@@ -122,7 +122,7 @@ class NxxHentai : MainAPI() {
 
     private fun normalizeEmbed(url: String): String {
         var u = url.trim()
-        if (u.contains("dood", ignoreCase = true) || u.contains("playmogo", ignoreCase = true)) {
+        if (u.contains("dood", true) || u.contains("playmogo", true) || u.contains("myvidplay", true)) {
             u = u.replace("/d/", "/e/")
         }
         return u
@@ -131,11 +131,11 @@ class NxxHentai : MainAPI() {
     private fun hostName(url: String): String {
         val u = url.lowercase()
         return when {
-            u.contains("dood") -> "DoodStream"
-            u.contains("playmogo") -> "DoodStream"
+            u.contains("mixdrop") -> "MixDrop"
+            u.contains("dood") || u.contains("myvidplay") || u.contains("playmogo") -> "DoodStream"
             u.contains("streamtape") -> "Streamtape"
             u.contains("voe.sx") -> "VOE"
-            u.contains("streamhg") || u.contains("sssrr") -> "StreamHG"
+            u.contains("streamhg") || u.contains("sssrr") || u.contains("hgcloud") -> "StreamHG"
             u.contains("upn.") -> "UPN"
             u.contains("player.nxxhentai") -> "NxxPlayer"
             else -> "Server"
@@ -145,25 +145,31 @@ class NxxHentai : MainAPI() {
     private fun priority(url: String): Int {
         val u = url.lowercase()
         return when {
-            u.contains("dood") -> 10
-            u.contains("playmogo") -> 10
-            u.contains("streamtape") -> 9
-            u.contains("voe.sx") -> 8
-            u.contains("streamhg") || u.contains("sssrr") -> 7
+            u.contains("mixdrop") -> 10
+            u.contains("dood") || u.contains("myvidplay") || u.contains("playmogo") -> 9
+            u.contains("streamtape") -> 8
+            u.contains("voe.sx") -> 7
+            u.contains("streamhg") || u.contains("sssrr") -> 6
             u.contains("upn.") -> 5
-            u.contains("player.nxxhentai") -> 2
             else -> 3
         }
+    }
+
+    private fun isUsefulHost(url: String): Boolean {
+        val u = url.lowercase()
+        if (u.contains("youtube") || u.contains("facebook")) return false
+        if (u.contains("nxxhentai.net/links/")) return false
+        if (u.contains("nxxhentai.net/episodes/")) return false
+        if (u.contains("mega.nz")) return false
+        if (u.matches(Regex("""https?://[^/]*dood[^/]*/?"""))) return false
+        return true
     }
 
     private suspend fun resolveRedirect(url: String): String? {
         return try {
             val res = app.get(url, allowRedirects = true, referer = mainUrl)
             val finalUrl = res.url
-            if (finalUrl.startsWith("http") &&
-                !finalUrl.contains("nxxhentai.net/links/") &&
-                !finalUrl.contains("nxxhentai.net/episodes/")
-            ) {
+            if (finalUrl.startsWith("http") && isUsefulHost(finalUrl)) {
                 return finalUrl
             }
             val doc = res.document
@@ -171,14 +177,14 @@ class NxxHentai : MainAPI() {
             if (iframe != null) {
                 var src = iframe.attr("abs:src")
                 if (src.isBlank()) src = iframe.attr("abs:data-src")
-                if (src.isNotBlank()) return src
+                if (src.isNotBlank() && isUsefulHost(src)) return src
             }
             val html = doc.html()
             Regex(
-                """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx)/[^\s"'<>]+""",
+                """https?://(?:[\w.-]*dood[\w.-]*|myvidplay\.com|playmogo\.com|mixdrop[\w.-]*|streamtape\.com|voe\.sx|streamhg[\w.-]*|[\w.-]*sssrr\.org)/[^\s"'<>]+""",
                 RegexOption.IGNORE_CASE
             ).find(html)?.value
-        } catch (e: Exception) {
+        } catch (_: Exception) {
             null
         }
     }
@@ -193,6 +199,7 @@ class NxxHentai : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
+        // روابط التحميل /links/
         document.select("a[href*=/links/]").forEach { a ->
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@forEach
@@ -220,7 +227,7 @@ class NxxHentai : MainAPI() {
 
         val html = document.html()
         Regex(
-            """https?://(?:[\w.-]*dood[\w.-]*|playmogo\.com|streamtape\.com|voe\.sx|streamhg[\w.-]*|player\.nxxhentai\.net)/[^\s"'<>]+""",
+            """https?://(?:[\w.-]*dood[\w.-]*|myvidplay\.com|playmogo\.com|mixdrop[\w.-]*|streamtape\.com|voe\.sx|streamhg[\w.-]*|player\.nxxhentai\.net)/[^\s"'<>]+""",
             RegexOption.IGNORE_CASE
         ).findAll(html).forEach { m ->
             candidates.add(normalizeEmbed(m.value))
@@ -229,17 +236,21 @@ class NxxHentai : MainAPI() {
         val sorted = candidates.sortedByDescending { priority(it) }
 
         for (embedUrl in sorted) {
-            if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
-            if (embedUrl.contains("nxxhentai.net/links/")) continue
-            if (embedUrl.contains("mega.nz")) continue
-            if (embedUrl.matches(Regex("""https?://[^/]*dood[^/]*/?""", RegexOption.IGNORE_CASE))) continue
-
+            if (!isUsefulHost(embedUrl)) continue
             val name = hostName(embedUrl)
 
-            if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
-                found = true
-            } else if (
+            try {
+                if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
+                    found = true
+                    continue
+                }
+            } catch (_: Exception) {
+            }
+
+            // إظهار المصادر المعروفة حتى لو فشل المستخرج
+            if (embedUrl.contains("mixdrop", true) ||
                 embedUrl.contains("dood", true) ||
+                embedUrl.contains("myvidplay", true) ||
                 embedUrl.contains("playmogo", true) ||
                 embedUrl.contains("streamtape", true) ||
                 embedUrl.contains("voe.sx", true) ||
