@@ -37,11 +37,14 @@ class HentaiBalo : MainAPI() {
         val a = this.selectFirst("a") ?: return null
         val href = fixUrl(a.attr("href"))
         if (href.isBlank()) return null
+
         val title = this.selectFirst("div.title h4, h4")?.text()?.trim()
         if (title.isNullOrBlank()) return null
+
         val style = this.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
             ?: Regex("url\\(&quot;(.*?)&quot;\\)").find(style)?.groupValues?.getOrNull(1)
+
         return newAnimeSearchResponse(title, href, TvType.NSFW) {
             this.posterUrl = poster
         }
@@ -53,11 +56,14 @@ class HentaiBalo : MainAPI() {
             val a = el.selectFirst("a") ?: return@mapNotNull null
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@mapNotNull null
+
             var title = el.selectFirst("div.title h4, h4")?.text()?.trim().orEmpty()
             if (title.isBlank()) title = a.text().trim()
             if (title.isBlank()) return@mapNotNull null
+
             val style = el.selectFirst("div.poster, .poster")?.attr("style") ?: ""
             val poster = Regex("url\\((['\"]?)(.*?)\\1\\)").find(style)?.groupValues?.getOrNull(2)
+
             newAnimeSearchResponse(title, href, TvType.NSFW) {
                 this.posterUrl = poster
             }
@@ -66,33 +72,44 @@ class HentaiBalo : MainAPI() {
 
     override suspend fun load(url: String): LoadResponse {
         val document = app.get(url).document
+
         var title = document.selectFirst("h1")?.text()?.trim().orEmpty()
-        if (title.isBlank()) title = document.title().substringBefore("|").trim()
+        if (title.isBlank()) {
+            title = document.title().substringBefore("|").trim()
+        }
+
         val posterStyle = document.selectFirst("div.poster, .poster")?.attr("style") ?: ""
         val poster = document.selectFirst("img[src*=wp-content]")?.attr("abs:src")
             ?: Regex("url\\((['\"]?)(.*?)\\1\\)").find(posterStyle)?.groupValues?.getOrNull(2)
+
         val description = document.selectFirst("p")?.text()?.trim()
 
         val episodes = document.select(".EpisodesList a, ul.EpisodesList a").mapNotNull { a ->
             val text = a.text().trim()
             val href = fixUrl(a.attr("href"))
             if (href.isBlank()) return@mapNotNull null
+
             val epNum = Regex("""الحلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""حلقة\s*(\d+)""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: Regex("""^(\d+)$""").find(text)?.groupValues?.getOrNull(1)?.toIntOrNull()
                 ?: return@mapNotNull null
+
             newEpisode(href) {
                 this.name = "الحلقة $epNum"
                 this.episode = epNum
             }
         }.distinctBy { it.episode }.sortedBy { it.episode }
 
-        val finalEpisodes = if (episodes.isNotEmpty()) episodes else listOf(
-            newEpisode(url) {
-                this.name = "الحلقة 1"
-                this.episode = 1
-            }
-        )
+        val finalEpisodes = if (episodes.isNotEmpty()) {
+            episodes
+        } else {
+            listOf(
+                newEpisode(url) {
+                    this.name = "الحلقة 1"
+                    this.episode = 1
+                }
+            )
+        }
 
         return newAnimeLoadResponse(title, url, TvType.NSFW) {
             this.posterUrl = poster
@@ -102,14 +119,11 @@ class HentaiBalo : MainAPI() {
     }
 
     private fun cleanUrl(url: String): String {
-        var u = url.trim()
-        if (u.contains("mega.nz")) u = u.removeSuffix(".html")
-        return u
+        return url.trim().removeSuffix(".html")
     }
 
     private fun hostName(url: String): String {
         return when {
-            url.contains("mega.nz") -> "MEGA"
             url.contains("streamtape") -> "Streamtape"
             url.contains("voe.sx") -> "VOE"
             url.contains("rubyvid") -> "RubyVid"
@@ -117,21 +131,22 @@ class HentaiBalo : MainAPI() {
             url.contains("turbovid") -> "TurboVid"
             url.contains("savemavo") -> "SaveMavo"
             url.contains("hglamioz") -> "Hglamioz"
+            url.contains("mega.nz") -> "MEGA"
             else -> "Server"
         }
     }
 
     private fun priority(url: String): Int {
         return when {
-            url.contains("mega.nz") -> 10
-            url.contains("streamtape") -> 9
-            url.contains("voe.sx") -> 8
-            url.contains("rubyvid") -> 6
-            url.contains("playmogo") -> 5
-            url.contains("turbovid") -> 4
-            url.contains("savemavo") -> 2
-            url.contains("hglamioz") -> 1
-            else -> 0
+            url.contains("streamtape") -> 10
+            url.contains("voe.sx") -> 9
+            url.contains("rubyvid") -> 8
+            url.contains("playmogo") -> 7
+            url.contains("turbovid") -> 6
+            url.contains("savemavo") -> 3
+            url.contains("hglamioz") -> 2
+            url.contains("mega.nz") -> 0
+            else -> 1
         }
     }
 
@@ -151,6 +166,8 @@ class HentaiBalo : MainAPI() {
         for (li in sorted) {
             val raw = li.attr("data-watch").trim()
             if (raw.isBlank()) continue
+            if (raw.contains("mega.nz")) continue
+
             val embedUrl = cleanUrl(raw)
             val name = hostName(embedUrl)
 
