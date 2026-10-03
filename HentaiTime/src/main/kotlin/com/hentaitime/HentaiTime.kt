@@ -2,6 +2,7 @@ package com.hentaitime
 
 import com.lagradost.cloudstream3.*
 import com.lagradost.cloudstream3.utils.ExtractorLink
+import com.lagradost.cloudstream3.utils.ExtractorLinkType
 import com.lagradost.cloudstream3.utils.Qualities
 import com.lagradost.cloudstream3.utils.loadExtractor
 import com.lagradost.cloudstream3.utils.newExtractorLink
@@ -67,14 +68,12 @@ class HentaiTime : MainAPI() {
             title = document.title().substringBefore("-").substringBefore("|").trim()
         }
 
-        val poster = document.selectFirst("img.wp-post-image, .poster img, article img, video[poster]")
+        val poster = document.selectFirst("img.wp-post-image, .poster img, article img")
             ?.attr("abs:src")
-            ?: document.selectFirst("video")?.attr("abs:poster")
 
         val description = document.selectFirst(".entry-content p, .video-description, article p")
             ?.text()?.trim()
 
-        // صفحة تصنيف = قائمة حلقات
         if (url.contains("/category/")) {
             val episodes = document.select("article.thumb-block a, .thumb-block a").mapNotNull { a ->
                 val href = fixUrl(a.attr("href"))
@@ -99,7 +98,6 @@ class HentaiTime : MainAPI() {
             }
         }
 
-        // صفحة حلقة مفردة — حاول ربطها بالتصنيف إن وُجد
         val categoryLink = document.select("a[href*=/category/]").firstOrNull()?.attr("abs:href")
         if (!categoryLink.isNullOrBlank()) {
             try {
@@ -130,7 +128,6 @@ class HentaiTime : MainAPI() {
             }
         }
 
-        // حلقة واحدة
         val epNum = Regex("""(\d+)""").find(title)?.groupValues?.getOrNull(1)?.toIntOrNull() ?: 1
         return newAnimeLoadResponse(title, url, TvType.NSFW) {
             this.posterUrl = poster
@@ -157,8 +154,7 @@ class HentaiTime : MainAPI() {
         var found = false
         val candidates = linkedSetOf<String>()
 
-        // فيديو مباشر في الصفحة
-        document.select("video[src], source[src]").forEach { el ->
+        document.select("video source[src], video[src], source[src]").forEach { el ->
             val u = el.attr("abs:src").trim()
             if (u.isNotBlank()) candidates.add(u)
         }
@@ -169,20 +165,23 @@ class HentaiTime : MainAPI() {
             if (u.isNotBlank()) candidates.add(u)
         }
 
-        // كل روابط mp4 / مضيفات من HTML
         val html = document.html()
         Regex("""https?://[^\s"'<>]+""").findAll(html).forEach { m ->
             val u = m.value
             if (u.contains(".mp4") ||
                 u.contains("850005.xyz") ||
-                u.contains("embed", true) ||
                 u.contains("/e/") ||
                 u.contains("dood", true) ||
                 u.contains("streamtape") ||
                 u.contains("voe.sx") ||
                 u.contains("playmogo")
             ) {
-                if (!u.contains("oembed") && !u.contains("wp-json") && !u.contains(".jpg") && !u.contains(".png")) {
+                if (!u.contains("oembed") &&
+                    !u.contains("wp-json") &&
+                    !u.contains(".jpg") &&
+                    !u.contains(".png") &&
+                    !u.contains(".webp")
+                ) {
                     candidates.add(u)
                 }
             }
@@ -191,16 +190,21 @@ class HentaiTime : MainAPI() {
         for (embedUrl in candidates) {
             if (embedUrl.contains("youtube") || embedUrl.contains("facebook")) continue
 
-            // MP4 مباشر
             if (embedUrl.contains(".mp4") || embedUrl.contains("850005.xyz")) {
                 callback.invoke(
                     newExtractorLink(
                         source = this.name,
                         name = "Direct MP4",
-                        url = embedUrl
+                        url = embedUrl,
+                        type = ExtractorLinkType.VIDEO
                     ) {
                         this.referer = mainUrl
                         this.quality = Qualities.Unknown.value
+                        this.headers = mapOf(
+                            "Referer" to mainUrl,
+                            "Origin" to mainUrl,
+                            "User-Agent" to "Mozilla/5.0 (Linux; Android 13) AppleWebKit/537.36 Chrome/120.0.0.0 Mobile Safari/537.36"
+                        )
                     }
                 )
                 found = true
@@ -208,18 +212,6 @@ class HentaiTime : MainAPI() {
             }
 
             if (loadExtractor(embedUrl, mainUrl, subtitleCallback, callback)) {
-                found = true
-            } else {
-                callback.invoke(
-                    newExtractorLink(
-                        source = this.name,
-                        name = "Server",
-                        url = embedUrl
-                    ) {
-                        this.referer = mainUrl
-                        this.quality = Qualities.Unknown.value
-                    }
-                )
                 found = true
             }
         }
